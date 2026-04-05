@@ -56,6 +56,7 @@ model papers {
   finding       String?
   tags          Json           @default("[]")
   url           String?
+  analysis      Json?
   feed_id       String?        @db.Uuid
   added_by      String?        @db.Uuid
   approved      Boolean        @default(true)
@@ -123,6 +124,7 @@ model articles {
   summary    String?
   topic      String   @default("General")
   tags       Json     @default("[]")
+  analysis   Json?
   added_by   String?  @db.Uuid
   created_at DateTime @default(now()) @db.Timestamptz()
   user       users?   @relation("article_added_by", fields: [added_by], references: [id], onDelete: SetNull)
@@ -145,6 +147,7 @@ model daily_briefs {
   content     String
   topics      Json     @default("[]")
   paper_count Int      @default(0)
+  read        Boolean  @default(false)
   created_at  DateTime @default(now()) @db.Timestamptz()
   user        users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }

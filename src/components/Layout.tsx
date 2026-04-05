@@ -84,7 +84,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-icon" />
-          <span>PaperMind</span>
+          <span>@paperai</span>
         </div>
 
         <nav className="sidebar-nav">
@@ -145,7 +145,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
-          <span style={{ fontWeight: 650, fontSize: '0.95rem', letterSpacing: '-0.02em' }}>PaperMind</span>
+          <span style={{ fontWeight: 650, fontSize: '0.95rem', letterSpacing: '-0.02em' }}>@paperai</span>
           <div style={{ width: 36 }} />
         </div>
         {children}

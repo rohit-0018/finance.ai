@@ -177,6 +177,15 @@ export async function dbDeletePaper(id: string): Promise<void> {
   if (error) throw new Error(`Failed to delete paper: ${error.message}`)
 }
 
+export async function dbUpdatePaperAnalysis(id: string, analysis: unknown): Promise<void> {
+  const { error } = await supabase
+    .from('papers')
+    .update({ analysis })
+    .eq('id', id)
+
+  if (error) throw new Error(`Failed to save paper analysis: ${error.message}`)
+}
+
 export async function dbGetAllPapersAdmin(): Promise<Paper[]> {
   const { data, error } = await supabase
     .from('papers')
@@ -496,6 +505,26 @@ export async function dbGetArticles(): Promise<Article[]> {
   return (data ?? []) as Article[]
 }
 
+export async function dbGetArticle(id: string): Promise<Article> {
+  const { data, error } = await supabase
+    .from('articles')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (error) throw new Error(`Failed to fetch article: ${error.message}`)
+  return data as Article
+}
+
+export async function dbUpdateArticleAnalysis(id: string, analysis: unknown): Promise<void> {
+  const { error } = await supabase
+    .from('articles')
+    .update({ analysis })
+    .eq('id', id)
+
+  if (error) throw new Error(`Failed to save analysis: ${error.message}`)
+}
+
 export async function dbDeleteArticle(id: string): Promise<void> {
   const { error } = await supabase.from('articles').delete().eq('id', id)
   if (error) throw new Error(`Failed to delete article: ${error.message}`)
@@ -568,4 +597,13 @@ export async function dbGetBriefs(userId: string): Promise<DailyBrief[]> {
 
   if (error) throw new Error(`Failed to fetch briefs: ${error.message}`)
   return (data ?? []) as DailyBrief[]
+}
+
+export async function dbToggleBriefRead(id: string, read: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('daily_briefs')
+    .update({ read })
+    .eq('id', id)
+
+  if (error) throw new Error(`Failed to update brief: ${error.message}`)
 }

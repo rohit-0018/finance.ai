@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
 import {
   dbGetUserTopics,
@@ -7,66 +8,70 @@ import {
   dbGetBriefs,
   dbSaveBrief,
   dbGetPapers,
+  dbToggleBriefRead,
 } from '../lib/supabase'
 import { generateDailyBrief } from '../lib/anthropic'
 import { useStats } from '../hooks/useSaved'
-import type { UserTopic, DailyBrief } from '../types'
-import { TOPICS } from '../lib/utils'
-import { formatRelative } from '../lib/utils'
+import type { UserTopic, DailyBrief, Paper } from '../types'
+import { TOPICS, formatRelative, truncate } from '../lib/utils'
+import TagPill from '../components/TagPill'
 import toast from 'react-hot-toast'
 
 const RATING_LABELS = ['', 'Low', 'Some', 'Medium', 'High', 'Must-read']
 
 const InterestsPage: React.FC = () => {
+  const navigate = useNavigate()
   const userId = useAppStore((s) => s.currentUser?.id)
   const { data: stats } = useStats()
   const [topics, setTopics] = useState<UserTopic[]>([])
   const [briefs, setBriefs] = useState<DailyBrief[]>([])
+  const [topicPapers, setTopicPapers] = useState<Paper[]>([])
   const [loading, setLoading] = useState(true)
   const [briefLoading, setBriefLoading] = useState(false)
   const [customTopic, setCustomTopic] = useState('')
+  const [activeTopic, setActiveTopic] = useState<string | null>(null)
+  const [loadingPapers, setLoadingPapers] = useState(false)
+  const [expandedBrief, setExpandedBrief] = useState<string | null>(null)
+  const [briefProgress, setBriefProgress] = useState('')
+  const [briefFilter, setBriefFilter] = useState<'unread' | 'read' | 'all'>('unread')
 
   useEffect(() => {
     if (!userId) return
-    Promise.all([dbGetUserTopics(userId), dbGetBriefs(userId)]).then(
-      ([t, b]) => {
-        setTopics(t)
-        setBriefs(b)
-        setLoading(false)
-      }
-    )
+    Promise.all([dbGetUserTopics(userId), dbGetBriefs(userId)]).then(([t, b]) => {
+      setTopics(t)
+      setBriefs(b)
+      setLoading(false)
+    })
   }, [userId])
 
-  const handleRate = useCallback(
-    async (topic: string, rating: number) => {
-      if (!userId) return
-      try {
-        const saved = await dbUpsertUserTopic(userId, topic, rating)
-        setTopics((prev) => {
-          const exists = prev.find((t) => t.topic === topic)
-          if (exists) return prev.map((t) => (t.topic === topic ? saved : t))
-          return [...prev, saved]
-        })
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed')
-      }
-    },
-    [userId]
-  )
+  // Load papers when a topic is selected
+  useEffect(() => {
+    if (!activeTopic) { setTopicPapers([]); return }
+    setLoadingPapers(true)
+    dbGetPapers({ topic: activeTopic, limit: 20, offset: 0 })
+      .then(setTopicPapers)
+      .finally(() => setLoadingPapers(false))
+  }, [activeTopic])
 
-  const handleRemove = useCallback(
-    async (id: string) => {
-      if (!userId) return
-      try {
-        await dbDeleteUserTopic(userId, id)
-        setTopics((prev) => prev.filter((t) => t.id !== id))
-        toast.success('Topic removed')
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed')
-      }
-    },
-    [userId]
-  )
+  const handleRate = useCallback(async (topic: string, rating: number) => {
+    if (!userId) return
+    try {
+      const saved = await dbUpsertUserTopic(userId, topic, rating)
+      setTopics((prev) => {
+        const exists = prev.find((t) => t.topic === topic)
+        return exists ? prev.map((t) => (t.topic === topic ? saved : t)) : [...prev, saved]
+      })
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+  }, [userId])
+
+  const handleRemove = useCallback(async (id: string, topic: string) => {
+    if (!userId) return
+    try {
+      await dbDeleteUserTopic(userId, id)
+      setTopics((prev) => prev.filter((t) => t.id !== id))
+      if (activeTopic === topic) setActiveTopic(null)
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+  }, [userId, activeTopic])
 
   const handleAddCustom = useCallback(() => {
     if (!customTopic.trim()) return
@@ -75,180 +80,236 @@ const InterestsPage: React.FC = () => {
   }, [customTopic, handleRate])
 
   const handleGenerateBrief = useCallback(async () => {
-    if (!userId || topics.length === 0) {
-      toast.error('Add some topics first')
-      return
-    }
+    if (!userId || topics.length === 0) { toast.error('Add some topics first'); return }
     setBriefLoading(true)
+    setBriefProgress('Loading sources...')
     try {
       const topicNames = topics.sort((a, b) => b.rating - a.rating).map((t) => t.topic)
-      const papers = await dbGetPapers({ limit: 30, offset: 0 })
+      const papers = await dbGetPapers({ limit: 40, offset: 0 })
       const briefContent = await generateDailyBrief(
         topicNames,
-        papers.map((p) => ({ title: p.title, finding: p.finding, topic: p.topic }))
+        papers.map((p) => ({ title: p.title, finding: p.finding, topic: p.topic, problem: p.problem, method: p.method, abstract: p.abstract })),
+        setBriefProgress
       )
-      const saved = await dbSaveBrief({
-        userId,
-        content: briefContent,
-        topics: topicNames,
-        paperCount: papers.length,
-      })
+      const saved = await dbSaveBrief({ userId, content: briefContent, topics: topicNames, paperCount: papers.length })
       setBriefs((prev) => [saved, ...prev])
+      setExpandedBrief(saved.id)
       toast.success('Brief generated!')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to generate brief')
-    } finally {
-      setBriefLoading(false)
-    }
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+    finally { setBriefLoading(false); setBriefProgress('') }
   }, [userId, topics])
 
-  const getRating = (topic: string) => topics.find((t) => t.topic === topic)?.rating ?? 0
+  const handleToggleRead = useCallback(async (briefId: string, currentRead: boolean) => {
+    try {
+      await dbToggleBriefRead(briefId, !currentRead)
+      setBriefs((prev) => prev.map((b) => b.id === briefId ? { ...b, read: !currentRead } : b))
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+  }, [])
+
   const suggestedTopics = TOPICS.filter((t) => t !== 'All' && !topics.find((ut) => ut.topic === t))
+
+  if (loading) return <div className="loading-center">Loading...</div>
 
   return (
     <>
       <div className="page-header">
         <div className="page-title">My Interests</div>
         <div className="page-actions">
-          <button
-            className="btn btn-primary"
-            onClick={handleGenerateBrief}
-            disabled={briefLoading || topics.length === 0}
-          >
-            {briefLoading ? 'Generating...' : 'Generate Daily Brief'}
+          <button className="btn btn-primary" onClick={handleGenerateBrief} disabled={briefLoading || topics.length === 0}>
+            {briefLoading ? briefProgress || 'Generating...' : 'Intelligence Brief'}
           </button>
         </div>
       </div>
 
-      {/* Stats row */}
-      {stats && (
-        <div className="stats-row">
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: 'var(--accent)' }}>{stats.topicsFollowed}</div>
-            <div className="stat-label">Topics</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: 'var(--green)' }}>{stats.streak}</div>
-            <div className="stat-label">Papers Read</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: 'var(--amber)' }}>{stats.totalNotes}</div>
-            <div className="stat-label">Notes</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: 'var(--teal)' }}>{stats.articlesRead}</div>
-            <div className="stat-label">Articles</div>
-          </div>
-        </div>
-      )}
+      <div className="int-layout">
+        {/* Left: Topics */}
+        <div className="int-sidebar">
+          {/* Stats */}
+          {stats && (
+            <div className="int-stats">
+              <div className="int-stat">
+                <span className="int-stat-val" style={{ color: 'var(--accent)' }}>{stats.topicsFollowed}</span>
+                <span className="int-stat-lbl">Topics</span>
+              </div>
+              <div className="int-stat">
+                <span className="int-stat-val" style={{ color: 'var(--green)' }}>{stats.streak}</span>
+                <span className="int-stat-lbl">Read</span>
+              </div>
+              <div className="int-stat">
+                <span className="int-stat-val" style={{ color: 'var(--amber)' }}>{stats.totalNotes}</span>
+                <span className="int-stat-lbl">Notes</span>
+              </div>
+            </div>
+          )}
 
-      <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {/* My Topics */}
-        <div>
-          <h3 style={{ fontSize: '0.95rem', fontWeight: 650, marginBottom: '12px' }}>
-            Your Topics
-          </h3>
-          {loading ? (
-            <div className="loading-center">Loading...</div>
-          ) : topics.length === 0 ? (
-            <p style={{ fontSize: '0.85rem', color: 'var(--text3)' }}>
-              No topics yet. Add topics below to personalize your feed and daily briefs.
-            </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {topics.map((ut) => (
-                <div key={ut.id} className="topic-row">
-                  <span className="topic-row-name">{ut.topic}</span>
-                  <div className="star-rating">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        className={`star-btn ${star <= ut.rating ? 'active' : ''}`}
-                        onClick={() => handleRate(ut.topic, star)}
-                        title={RATING_LABELS[star]}
-                      >
-                        ★
-                      </button>
+          {/* Your topics */}
+          <div className="int-section-label">Your Topics</div>
+          {topics.length === 0 && (
+            <p style={{ fontSize: '0.82rem', color: 'var(--text3)', padding: '0 4px' }}>No topics yet. Add below.</p>
+          )}
+          <div className="int-topic-list">
+            {topics.map((ut) => (
+              <div
+                key={ut.id}
+                className={`int-topic ${activeTopic === ut.topic ? 'active' : ''}`}
+                onClick={() => setActiveTopic(activeTopic === ut.topic ? null : ut.topic)}
+              >
+                <div className="int-topic-main">
+                  <span className="int-topic-name">{ut.topic}</span>
+                  <span className="int-topic-rating">
+                    {'★'.repeat(ut.rating)}{'☆'.repeat(5 - ut.rating)}
+                  </span>
+                </div>
+                <div className="int-topic-actions" onClick={(e) => e.stopPropagation()}>
+                  <span className="int-topic-level">{RATING_LABELS[ut.rating]}</span>
+                  <div className="int-star-row">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <button key={s} className={`star-btn-sm ${s <= ut.rating ? 'active' : ''}`} onClick={() => handleRate(ut.topic, s)}>★</button>
                     ))}
                   </div>
-                  <span className="topic-row-label">{RATING_LABELS[ut.rating]}</span>
-                  <button className="btn btn-sm btn-danger" onClick={() => handleRemove(ut.id)}>
-                    Remove
-                  </button>
+                  <button className="int-remove" onClick={() => handleRemove(ut.id, ut.topic)}>×</button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              </div>
+            ))}
+          </div>
 
-        {/* Add topic */}
-        <div>
-          <h3 style={{ fontSize: '0.95rem', fontWeight: 650, marginBottom: '12px' }}>
-            Add Topics
-          </h3>
+          {/* Add topic */}
+          <div className="int-section-label" style={{ marginTop: '16px' }}>Add Topics</div>
           {suggestedTopics.length > 0 && (
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
-              {suggestedTopics.map((topic) => (
-                <button
-                  key={topic}
-                  className="topic-chip"
-                  onClick={() => handleRate(topic, 3)}
-                >
-                  + {topic}
-                </button>
+            <div className="int-suggest">
+              {suggestedTopics.map((t) => (
+                <button key={t} className="int-suggest-chip" onClick={() => handleRate(t, 3)}>+ {t}</button>
               ))}
             </div>
           )}
-          <div style={{ display: 'flex', gap: '8px', maxWidth: '400px' }}>
-            <input
-              type="text"
-              placeholder="Custom topic..."
-              value={customTopic}
-              onChange={(e) => setCustomTopic(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAddCustom()}
-              style={{ flex: 1 }}
-            />
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={handleAddCustom}
-              disabled={!customTopic.trim()}
-            >
-              Add
-            </button>
+          <div className="int-add-row">
+            <input type="text" placeholder="Custom topic..." value={customTopic} onChange={(e) => setCustomTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAddCustom()} />
+            <button className="btn btn-sm btn-primary" onClick={handleAddCustom} disabled={!customTopic.trim()}>Add</button>
           </div>
         </div>
 
-        {/* Daily Briefs */}
-        <div>
-          <h3 style={{ fontSize: '0.95rem', fontWeight: 650, marginBottom: '12px' }}>
-            Daily Briefs
-          </h3>
-          {briefs.length === 0 ? (
-            <p style={{ fontSize: '0.85rem', color: 'var(--text3)' }}>
-              No briefs yet. Add topics and click "Generate Daily Brief" to get a personalized AI summary.
-            </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {briefs.map((brief) => (
-                <div key={brief.id} className="card brief-card">
-                  <div className="brief-header">
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text3)' }}>
-                      {formatRelative(brief.created_at)} · {brief.paper_count} papers reviewed
-                    </span>
-                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                      {(brief.topics as string[]).slice(0, 4).map((t) => (
-                        <span key={t} className="topic-chip" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div
-                    className="brief-content"
-                    dangerouslySetInnerHTML={{ __html: brief.content }}
-                  />
+        {/* Right: Content */}
+        <div className="int-content">
+          {/* Topic papers */}
+          {activeTopic && (
+            <div className="int-panel">
+              <div className="int-panel-header">
+                <h3>{activeTopic}</h3>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text3)' }}>{topicPapers.length} papers</span>
+              </div>
+              {loadingPapers ? (
+                <div className="loading-center">Loading...</div>
+              ) : topicPapers.length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text3)', fontSize: '0.85rem' }}>
+                  No papers in this topic yet. Fetch some from the Feed page.
                 </div>
-              ))}
+              ) : (
+                <div className="int-paper-list">
+                  {topicPapers.map((p) => (
+                    <div key={p.id} className="int-paper" onClick={() => navigate(`/reader/${p.id}`)}>
+                      <div className="int-paper-top">
+                        <TagPill label={p.source} source />
+                        {p.analysis && <span className="al-card-badge analyzed">Deep Read</span>}
+                      </div>
+                      <div className="int-paper-title">{p.title}</div>
+                      {p.finding && <div className="int-paper-finding">{truncate(p.finding, 120)}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Briefs */}
+          {!activeTopic && (
+            <div className="int-panel">
+              <div className="int-panel-header">
+                <h3>Intelligence Briefs</h3>
+                <div className="bf-filter-bar">
+                  {(['unread', 'all', 'read'] as const).map((f) => (
+                    <button
+                      key={f}
+                      className={`bf-filter-btn ${briefFilter === f ? 'active' : ''}`}
+                      onClick={() => setBriefFilter(f)}
+                    >
+                      {f === 'unread' ? `Unread (${briefs.filter((b) => !b.read).length})` : f === 'read' ? `Read (${briefs.filter((b) => b.read).length})` : `All (${briefs.length})`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {briefs.length === 0 ? (
+                <div className="bf-empty">
+                  <div className="bf-empty-icon">📡</div>
+                  <div className="bf-empty-title">No briefs yet</div>
+                  <div className="bf-empty-desc">
+                    Add topics and click "Intelligence Brief" to generate a 3-pass editorial analysis of recent research.
+                  </div>
+                </div>
+              ) : (
+                <div className="bf-scroll">
+                  {briefs
+                    .filter((b) => briefFilter === 'all' ? true : briefFilter === 'read' ? b.read : !b.read)
+                    .map((brief) => {
+                      const isExpanded = expandedBrief === brief.id
+                      return (
+                        <div key={brief.id} className={`bf-card ${brief.read ? 'is-read' : ''} ${isExpanded ? 'is-expanded' : ''}`}>
+                          {/* Header row */}
+                          <div className="bf-card-header" onClick={() => setExpandedBrief(isExpanded ? null : brief.id)}>
+                            <button
+                              className={`bf-check ${brief.read ? 'checked' : ''}`}
+                              onClick={(e) => { e.stopPropagation(); handleToggleRead(brief.id, brief.read) }}
+                              title={brief.read ? 'Mark as unread' : 'Mark as read'}
+                            >
+                              {brief.read ? '✓' : ''}
+                            </button>
+                            <div className="bf-card-info">
+                              <div className="bf-card-date">
+                                {formatRelative(brief.created_at)}
+                                {brief.read && <span className="bf-read-badge">Read</span>}
+                              </div>
+                              <div className="bf-card-meta">
+                                {brief.paper_count} sources · 3-pass synthesis
+                              </div>
+                            </div>
+                            <div className="bf-card-topics">
+                              {(brief.topics as string[]).slice(0, 3).map((t) => (
+                                <TagPill key={t} label={t} />
+                              ))}
+                            </div>
+                            <span className="bf-toggle">{isExpanded ? '−' : '+'}</span>
+                          </div>
+
+                          {/* Expanded body */}
+                          {isExpanded && (
+                            <div className="bf-card-body">
+                              <div
+                                className="bf-prose"
+                                dangerouslySetInnerHTML={{ __html: brief.content }}
+                              />
+                              <div className="bf-card-footer">
+                                <button
+                                  className="btn btn-sm"
+                                  onClick={() => handleToggleRead(brief.id, brief.read)}
+                                >
+                                  {brief.read ? 'Mark unread' : 'Mark as read'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+
+                  {briefs.filter((b) => briefFilter === 'all' ? true : briefFilter === 'read' ? b.read : !b.read).length === 0 && (
+                    <div className="bf-empty" style={{ padding: '40px 0' }}>
+                      <div className="bf-empty-desc">
+                        No {briefFilter} briefs.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

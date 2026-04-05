@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
 import { dbGetArticles, dbSaveArticle, dbDeleteArticle } from '../lib/supabase'
-import { summarizeArticle, articleChat } from '../lib/anthropic'
-import type { Article } from '../types'
+import { summarizeArticle } from '../lib/anthropic'
+import type { Article, DeepAnalysis } from '../types'
 import { formatRelative, truncate } from '../lib/utils'
 import TagPill from '../components/TagPill'
 import toast from 'react-hot-toast'
@@ -22,109 +23,44 @@ async function fetchPageContent(url: string): Promise<{ title: string; content: 
     const proxyUrl = buildUrl(url)
     const proxyName = proxyUrl.split('/')[2]
     try {
-      console.log(`[ArticleExtract] Trying ${proxyName}...`)
+      console.log(`[Extract] Trying ${proxyName}...`)
       const res = await fetch(proxyUrl)
-
-      if (!res.ok) {
-        const msg = `${proxyName}: HTTP ${res.status}`
-        console.warn(`[ArticleExtract] ${msg}`)
-        errors.push(msg)
-        continue
-      }
+      if (!res.ok) { errors.push(`${proxyName}: HTTP ${res.status}`); continue }
 
       const html = await res.text()
-      console.log(`[ArticleExtract] ${proxyName} returned ${html.length} chars`)
+      if (html.length < 200) { errors.push(`${proxyName}: too short (${html.length})`); continue }
 
-      if (html.length < 200) {
-        const msg = `${proxyName}: response too short (${html.length} chars)`
-        console.warn(`[ArticleExtract] ${msg}`)
-        errors.push(msg)
-        continue
-      }
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      doc.querySelectorAll('script,style,nav,footer,header,aside,iframe,svg,[role="navigation"],[role="banner"],.sidebar,.comments,.ad,.social-share').forEach((el) => el.remove())
 
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(html, 'text/html')
+      const title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()
+        ?? doc.querySelector('h1')?.textContent?.trim()
+        ?? doc.querySelector('title')?.textContent?.trim()
+        ?? url
 
-      // Remove noise elements
-      doc.querySelectorAll(
-        'script, style, nav, footer, header, aside, iframe, svg, [role="navigation"], [role="banner"], .sidebar, .comments, .ad, .advertisement, .social-share'
-      ).forEach((el) => el.remove())
-
-      // Title: try multiple strategies
-      const title =
-        doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim() ??
-        doc.querySelector('h1')?.textContent?.trim() ??
-        doc.querySelector('title')?.textContent?.trim() ??
-        url
-
-      // Content: try progressively broader selectors
-      const selectors = [
-        'article',
-        '[role="main"]',
-        'main',
-        '.post-content',
-        '.article-content',
-        '.entry-content',
-        '.post-body',
-        '.article-body',
-        '.content-body',
-        '.blog-post',
-        '.post',
-        '#content',
-        '.content',
-        // Substack specific
-        '.body.markup',
-        '.available-content',
-        '.single-post',
-      ]
-
+      const selectors = ['article','[role="main"]','main','.post-content','.article-content','.entry-content','.post-body','.article-body','.content-body','.blog-post','.post','#content','.content','.body.markup','.available-content','.single-post']
       let content = ''
       for (const sel of selectors) {
         const el = doc.querySelector(sel)
-        if (el) {
-          content = el.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-          if (content.length >= 100) {
-            console.log(`[ArticleExtract] Found content via "${sel}" (${content.length} chars)`)
-            break
-          }
-        }
+        if (el) { content = el.textContent?.replace(/\s+/g, ' ').trim() ?? ''; if (content.length >= 100) break }
       }
-
-      // Fallback to body
-      if (content.length < 100) {
-        content = doc.body?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-        console.log(`[ArticleExtract] Fallback to body (${content.length} chars)`)
-      }
-
-      if (content.length < 100) {
-        const msg = `${proxyName}: extracted content too short (${content.length} chars)`
-        console.warn(`[ArticleExtract] ${msg}`)
-        errors.push(msg)
-        continue
-      }
+      if (content.length < 100) content = doc.body?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+      if (content.length < 100) { errors.push(`${proxyName}: content too short`); continue }
 
       return { title, content: content.slice(0, 15000) }
     } catch (err) {
-      const msg = `${proxyName}: ${err instanceof Error ? err.message : 'network error'}`
-      console.error(`[ArticleExtract] ${msg}`)
-      errors.push(msg)
+      errors.push(`${proxyName}: ${err instanceof Error ? err.message : 'error'}`)
     }
   }
-
-  const errorSummary = errors.join('\n')
-  console.error(`[ArticleExtract] All proxies failed for ${url}:\n${errorSummary}`)
-  throw new Error(`Extraction failed:\n${errors.join(', ')}`)
+  throw new Error(`Extraction failed: ${errors.join(', ')}`)
 }
 
 // ---------- Component ----------
 
-interface IngestResult {
-  url: string
-  status: 'success' | 'error'
-  message: string
-}
+interface IngestResult { url: string; status: 'success' | 'error'; message: string }
 
 const ArticlesPage: React.FC = () => {
+  const navigate = useNavigate()
   const userId = useAppStore((s) => s.currentUser?.id)
   const isAdmin = useAppStore((s) => s.isAdmin)
   const [articles, setArticles] = useState<Article[]>([])
@@ -133,27 +69,16 @@ const ArticlesPage: React.FC = () => {
   const [ingesting, setIngesting] = useState(false)
   const [progress, setProgress] = useState('')
   const [results, setResults] = useState<IngestResult[]>([])
-
-  // Chat state
-  const [chatArticle, setChatArticle] = useState<Article | null>(null)
-  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
-  const [chatInput, setChatInput] = useState('')
-  const [chatLoading, setChatLoading] = useState(false)
+  const [showIngest, setShowIngest] = useState(false)
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     dbGetArticles().then(setArticles).finally(() => setLoading(false))
   }, [])
 
   const handleIngest = useCallback(async () => {
-    const urlList = urls
-      .split('\n')
-      .map((u) => u.trim())
-      .filter((u) => u.length > 0 && (u.startsWith('http://') || u.startsWith('https://')))
-
-    if (urlList.length === 0) {
-      toast.error('Enter at least one valid URL (must start with http:// or https://)')
-      return
-    }
+    const urlList = urls.split('\n').map((u) => u.trim()).filter((u) => u.startsWith('http'))
+    if (urlList.length === 0) { toast.error('Enter at least one valid URL'); return }
 
     setIngesting(true)
     setResults([])
@@ -161,240 +86,197 @@ const ArticlesPage: React.FC = () => {
 
     for (const url of urlList) {
       try {
-        setProgress(`Extracting content from ${new URL(url).hostname}...`)
+        setProgress(`Extracting: ${new URL(url).hostname}`)
         const { title, content } = await fetchPageContent(url)
-
-        setProgress(`AI analyzing: "${title.slice(0, 50)}"...`)
+        setProgress(`Analyzing: ${title.slice(0, 40)}...`)
         const analysis = await summarizeArticle(title, content)
-
-        const article = await dbSaveArticle({
-          url,
-          title,
-          content,
-          summary: analysis.summary,
-          topic: analysis.topic,
-          tags: analysis.tags,
-          addedBy: userId,
-        })
-
+        const article = await dbSaveArticle({ url, title, content, summary: analysis.summary, topic: analysis.topic, tags: analysis.tags, addedBy: userId })
         setArticles((prev) => [article, ...prev.filter((a) => a.id !== article.id)])
-        newResults.push({ url, status: 'success', message: `Saved: "${title}"` })
-        toast.success(`Saved: ${title.slice(0, 40)}`)
+        newResults.push({ url, status: 'success', message: title })
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : 'Unknown error'
-        console.error(`[Ingest] Failed for ${url}:`, errMsg)
-        newResults.push({ url, status: 'error', message: errMsg })
-        toast.error(`Failed: ${url.slice(0, 40)}... — ${errMsg.split('\n')[0]}`)
+        const msg = err instanceof Error ? err.message : 'Unknown error'
+        console.error(`[Ingest] ${url}:`, msg)
+        newResults.push({ url, status: 'error', message: msg })
+        toast.error(`Failed: ${msg.split('\n')[0].slice(0, 60)}`)
       }
     }
 
     setResults(newResults)
     setIngesting(false)
     setProgress('')
-    if (newResults.every((r) => r.status === 'success')) setUrls('')
+    const ok = newResults.filter((r) => r.status === 'success').length
+    if (ok > 0) toast.success(`${ok} article${ok > 1 ? 's' : ''} saved`)
+    if (newResults.every((r) => r.status === 'success')) { setUrls(''); setShowIngest(false) }
   }, [urls, userId])
 
   const handleDelete = useCallback(async (id: string) => {
+    if (!window.confirm('Delete this article?')) return
     try {
       await dbDeleteArticle(id)
       setArticles((prev) => prev.filter((a) => a.id !== id))
-      toast.success('Article deleted')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed')
-    }
+      toast.success('Deleted')
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
   }, [])
 
-  const openChat = useCallback((article: Article) => {
-    setChatArticle(article)
-    setChatMessages([])
-    setChatInput('')
-  }, [])
+  const filtered = search
+    ? articles.filter((a) => a.title.toLowerCase().includes(search.toLowerCase()) || a.topic.toLowerCase().includes(search.toLowerCase()))
+    : articles
 
-  const sendChat = useCallback(async () => {
-    if (!chatArticle || !chatInput.trim() || chatLoading) return
-    const userMsg = chatInput.trim()
-    setChatInput('')
-    const newMessages = [...chatMessages, { role: 'user' as const, content: userMsg }]
-    setChatMessages(newMessages)
-    setChatLoading(true)
-
-    try {
-      const reply = await articleChat(
-        { title: chatArticle.title, content: chatArticle.content, summary: chatArticle.summary },
-        newMessages
-      )
-      setChatMessages([...newMessages, { role: 'assistant' as const, content: reply }])
-    } catch (err) {
-      setChatMessages([
-        ...newMessages,
-        { role: 'assistant' as const, content: `Error: ${err instanceof Error ? err.message : 'Failed'}` },
-      ])
-    } finally {
-      setChatLoading(false)
-    }
-  }, [chatArticle, chatInput, chatMessages, chatLoading])
+  const analyzed = filtered.filter((a) => a.analysis)
+  const unanalyzed = filtered.filter((a) => !a.analysis)
 
   return (
     <>
       <div className="page-header">
         <div className="page-title">Articles</div>
         <div className="page-actions">
-          <span style={{ fontSize: '0.78rem', color: 'var(--text3)' }}>
-            {articles.length} article{articles.length !== 1 ? 's' : ''}
-          </span>
+          {isAdmin() && (
+            <button className="btn btn-primary" onClick={() => setShowIngest(!showIngest)}>
+              {showIngest ? 'Close' : '+ Add Articles'}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Admin ingest section */}
-      {isAdmin() && (
-        <div className="ingest-section">
-          <div className="ingest-header">
-            <div>
-              <div className="ingest-title">Ingest Articles</div>
-              <div className="ingest-desc">
-                Paste URLs (one per line). Content is extracted, analyzed by AI, and saved for everyone.
-              </div>
-            </div>
-          </div>
-          <textarea
-            value={urls}
-            onChange={(e) => setUrls(e.target.value)}
-            placeholder={'https://example.com/interesting-article\nhttps://blog.example.com/another-post'}
-            rows={3}
-            className="ingest-textarea"
-          />
-          <div className="ingest-actions">
-            <button
-              className="btn btn-primary"
-              onClick={handleIngest}
-              disabled={ingesting || !urls.trim()}
-            >
-              {ingesting ? 'Processing...' : 'Extract & Save'}
-            </button>
-            {progress && <span className="ingest-progress">{progress}</span>}
-          </div>
-
-          {/* Results log */}
-          {results.length > 0 && (
-            <div className="ingest-results">
-              {results.map((r, i) => (
-                <div key={i} className={`ingest-result ${r.status}`}>
-                  <span className="ingest-result-icon">
-                    {r.status === 'success' ? '✓' : '✗'}
-                  </span>
-                  <div className="ingest-result-body">
-                    <div className="ingest-result-url">{r.url}</div>
-                    <div className="ingest-result-msg">{r.message}</div>
-                  </div>
-                </div>
-              ))}
-              <button
-                className="btn btn-sm"
-                onClick={() => setResults([])}
-                style={{ alignSelf: 'flex-start', marginTop: '4px' }}
-              >
-                Clear log
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Chat panel */}
-      {chatArticle && (
-        <div className="article-chat-panel">
-          <div className="article-chat-header">
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="article-chat-title">{chatArticle.title}</div>
-              <div className="article-chat-url">{chatArticle.url}</div>
-            </div>
-            <button className="btn btn-sm" onClick={() => setChatArticle(null)}>Close</button>
-          </div>
-          <div className="qa-messages" style={{ maxHeight: '300px' }}>
-            {chatMessages.length === 0 && (
-              <div style={{ color: 'var(--text3)', fontSize: '0.85rem', textAlign: 'center', padding: '24px 0' }}>
-                Ask anything about this article.
-              </div>
-            )}
-            {chatMessages.map((msg, i) => (
-              <div key={i} className="qa-message">
-                <div className={`qa-avatar ${msg.role}`}>
-                  {msg.role === 'user' ? 'U' : 'AI'}
-                </div>
-                <div className="qa-bubble" dangerouslySetInnerHTML={{ __html: msg.content }} />
-              </div>
-            ))}
-            {chatLoading && (
-              <div className="qa-message">
-                <div className="qa-avatar assistant">AI</div>
-                <div className="typing-indicator"><span /><span /><span /></div>
-              </div>
-            )}
-          </div>
-          <div className="qa-input-area">
+      {/* Admin ingest panel */}
+      {showIngest && isAdmin() && (
+        <div className="al-ingest">
+          <div className="al-ingest-inner">
+            <div className="al-ingest-label">Paste article URLs (one per line)</div>
             <textarea
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat() } }}
-              placeholder="Ask about this article..."
-              rows={1}
-              disabled={chatLoading}
+              value={urls}
+              onChange={(e) => setUrls(e.target.value)}
+              placeholder={'https://example.com/article-one\nhttps://blog.example.com/post-two'}
+              rows={3}
             />
-            <button className="btn btn-primary" onClick={sendChat} disabled={chatLoading || !chatInput.trim()}>
-              Send
-            </button>
+            <div className="al-ingest-bar">
+              <button className="btn btn-primary" onClick={handleIngest} disabled={ingesting || !urls.trim()}>
+                {ingesting ? progress || 'Processing...' : 'Extract & Save'}
+              </button>
+              {results.length > 0 && (
+                <button className="btn btn-sm" onClick={() => setResults([])}>Clear log</button>
+              )}
+            </div>
+            {results.length > 0 && (
+              <div className="al-ingest-log">
+                {results.map((r, i) => (
+                  <div key={i} className={`al-log-row ${r.status}`}>
+                    <span className="al-log-icon">{r.status === 'success' ? '✓' : '✗'}</span>
+                    <span className="al-log-text">{r.status === 'success' ? r.message : `${r.url.slice(0, 50)} — ${r.message.split('\n')[0]}`}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* Article list */}
+      {/* Search + count bar */}
+      <div className="al-toolbar">
+        <input
+          type="text"
+          placeholder="Search articles..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="al-search"
+        />
+        <span className="al-count">{filtered.length} article{filtered.length !== 1 ? 's' : ''}</span>
+      </div>
+
+      {/* Content */}
       {loading ? (
         <div className="loading-center">Loading articles...</div>
-      ) : articles.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">A</div>
-          <div className="empty-state-title">No articles yet</div>
+          <div className="empty-state-title">{search ? 'No matches' : 'No articles yet'}</div>
           <div className="empty-state-desc">
-            {isAdmin()
-              ? 'Paste URLs above to extract and save articles.'
-              : 'Articles will appear here once an admin adds them.'}
+            {search ? 'Try a different search.' : isAdmin() ? 'Click "+ Add Articles" to start ingesting.' : 'Articles will appear here once an admin adds them.'}
           </div>
         </div>
       ) : (
-        <div className="articles-list">
-          {articles.map((article) => (
-            <div key={article.id} className="article-row">
-              <div className="article-row-main">
-                <div className="article-row-title">{article.title}</div>
-                {article.summary && (
-                  <div className="article-row-summary">{truncate(article.summary, 200)}</div>
-                )}
-                <div className="article-row-meta">
-                  <TagPill label={article.topic} />
-                  {article.tags && (article.tags as string[]).slice(0, 3).map((tag) => (
-                    <TagPill key={tag} label={tag} />
-                  ))}
-                  <span className="article-row-date">{formatRelative(article.created_at)}</span>
-                </div>
-              </div>
-              <div className="article-row-actions">
-                <a href={article.url} target="_blank" rel="noopener noreferrer" className="btn btn-sm">
-                  Source ↗
-                </a>
-                <button className="btn btn-sm btn-primary" onClick={() => openChat(article)}>
-                  Ask AI
-                </button>
-                {isAdmin() && (
-                  <button className="btn btn-sm btn-danger" onClick={() => handleDelete(article.id)}>
-                    Delete
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+        <div className="al-grid">
+          {/* Analyzed articles first */}
+          {analyzed.length > 0 && (
+            <>
+              {unanalyzed.length > 0 && <div className="al-section-label">Deep Reads</div>}
+              {analyzed.map((article) => (
+                <ArticleCard key={article.id} article={article} navigate={navigate} isAdmin={isAdmin()} onDelete={handleDelete} />
+              ))}
+            </>
+          )}
+          {unanalyzed.length > 0 && (
+            <>
+              {analyzed.length > 0 && <div className="al-section-label">Unanalyzed</div>}
+              {unanalyzed.map((article) => (
+                <ArticleCard key={article.id} article={article} navigate={navigate} isAdmin={isAdmin()} onDelete={handleDelete} />
+              ))}
+            </>
+          )}
         </div>
       )}
     </>
+  )
+}
+
+// ---------- Article Card ----------
+
+const ArticleCard: React.FC<{
+  article: Article
+  navigate: ReturnType<typeof useNavigate>
+  isAdmin: boolean
+  onDelete: (id: string) => void
+}> = ({ article, navigate, isAdmin, onDelete }) => {
+  const analysis = article.analysis as DeepAnalysis | null
+  const domain = (() => { try { return new URL(article.url).hostname.replace('www.', '') } catch { return '' } })()
+
+  return (
+    <div className="al-card" onClick={() => navigate(`/article/${article.id}`)}>
+      {/* Top: domain + date */}
+      <div className="al-card-top">
+        <span className="al-card-domain">{domain}</span>
+        <span className="al-card-date">{formatRelative(article.created_at)}</span>
+      </div>
+
+      {/* Title */}
+      <h3 className="al-card-title">{article.title}</h3>
+
+      {/* TL;DR or summary */}
+      <p className="al-card-excerpt">
+        {analysis?.tldr
+          ? analysis.tldr
+          : article.summary
+            ? truncate(article.summary, 160)
+            : 'No summary available.'}
+      </p>
+
+      {/* Tags */}
+      <div className="al-card-tags">
+        <TagPill label={article.topic} />
+        {(article.tags as string[]).slice(0, 3).map((tag) => (
+          <TagPill key={tag} label={tag} />
+        ))}
+      </div>
+
+      {/* Bottom bar */}
+      <div className="al-card-bottom" onClick={(e) => e.stopPropagation()}>
+        {analysis ? (
+          <span className="al-card-badge analyzed">Deep Read</span>
+        ) : (
+          <span className="al-card-badge pending">Not analyzed</span>
+        )}
+        <div className="al-card-actions">
+          <a href={article.url} target="_blank" rel="noopener noreferrer" className="al-card-link" onClick={(e) => e.stopPropagation()}>
+            Source
+          </a>
+          {isAdmin && (
+            <button className="al-card-link danger" onClick={(e) => { e.stopPropagation(); onDelete(article.id) }}>
+              Delete
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -12,6 +12,7 @@ const FeedPage: React.FC = () => {
   const activeTopic = useAppStore((s) => s.activeTopic)
   const setActiveTopic = useAppStore((s) => s.setActiveTopic)
   const setSavedIds = useAppStore((s) => s.setSavedIds)
+  const isAdmin = useAppStore((s) => s.isAdmin)
 
   const {
     data,
@@ -72,22 +73,24 @@ const FeedPage: React.FC = () => {
     <>
       <div className="page-header">
         <div className="page-title">Discovery Feed</div>
-        <div className="page-actions">
-          <button
-            className="btn btn-primary"
-            onClick={handleFetchAI}
-            disabled={fetchAI.isPending}
-          >
-            {fetchAI.isPending ? 'Fetching...' : 'Fetch via AI'}
-          </button>
-          <button
-            className="btn"
-            onClick={handleFetchRSS}
-            disabled={fetchRSS.isPending}
-          >
-            {fetchRSS.isPending ? 'Pulling...' : 'Pull RSS Feeds'}
-          </button>
-        </div>
+        {isAdmin() && (
+          <div className="page-actions">
+            <button
+              className="btn btn-primary"
+              onClick={handleFetchAI}
+              disabled={fetchAI.isPending}
+            >
+              {fetchAI.isPending ? 'Fetching...' : 'Fetch via AI'}
+            </button>
+            <button
+              className="btn"
+              onClick={handleFetchRSS}
+              disabled={fetchRSS.isPending}
+            >
+              {fetchRSS.isPending ? 'Pulling...' : 'Pull RSS Feeds'}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="topic-bar">
@@ -118,14 +121,18 @@ const FeedPage: React.FC = () => {
         <EmptyState
           icon="P"
           title="No papers yet"
-          description="Fetch papers via AI or pull from your RSS feeds to get started."
+          description={isAdmin() ? 'Fetch papers via AI or pull from your RSS feeds to get started.' : 'Papers will appear here once an admin adds them.'}
         >
-          <button className="btn btn-primary" onClick={handleFetchAI}>
-            Fetch via AI
-          </button>
-          <button className="btn" onClick={handleFetchRSS}>
-            Pull RSS
-          </button>
+          {isAdmin() && (
+            <>
+              <button className="btn btn-primary" onClick={handleFetchAI}>
+                Fetch via AI
+              </button>
+              <button className="btn" onClick={handleFetchRSS}>
+                Pull RSS
+              </button>
+            </>
+          )}
         </EmptyState>
       ) : (
         <div className="paper-grid">

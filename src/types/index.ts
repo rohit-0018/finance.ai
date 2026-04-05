@@ -28,6 +28,7 @@ export interface Paper {
   tags: string[]
   url: string | null
   feed_id: string | null
+  analysis: DeepAnalysis | null
   added_by: string | null
   approved: boolean
   fetched_at: string
@@ -77,6 +78,21 @@ export interface RSSFeed {
   created_at: string
 }
 
+export interface DeepAnalysis {
+  hook: string
+  coreProblem: string
+  proposedSolution: string
+  evidence: string
+  implications: string
+  limitations: string
+  fieldContext: string
+  tldr: string
+  noveltySignals: string[]
+  hedgingSignals: string[]
+  cherryPickRisks: string[]
+  readingMode?: 'researcher' | 'practitioner' | 'layperson'
+}
+
 export interface Article {
   id: string
   url: string
@@ -85,6 +101,7 @@ export interface Article {
   summary: string | null
   topic: string
   tags: string[]
+  analysis: DeepAnalysis | null
   added_by: string | null
   created_at: string
 }
@@ -103,6 +120,7 @@ export interface DailyBrief {
   content: string
   topics: string[]
   paper_count: number
+  read: boolean
   created_at: string
 }
 

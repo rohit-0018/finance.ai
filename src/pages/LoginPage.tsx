@@ -34,7 +34,7 @@ const LoginPage: React.FC = () => {
         <div className="login-logo">
           <div className="logo-icon" style={{ width: 28, height: 28, background: 'var(--accent)', borderRadius: 8 }} />
           <span style={{ fontWeight: 700, fontSize: '1.2rem', letterSpacing: '-0.03em' }}>
-            PaperMind
+            @paperai
           </span>
         </div>
 
