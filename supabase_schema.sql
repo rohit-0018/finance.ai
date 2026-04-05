@@ -10,6 +10,7 @@ create table if not exists users (
   username text not null,
   password text not null,
   is_admin boolean not null default false,
+  blocked boolean not null default false,
   display_name text,
   created_at timestamptz not null default now(),
   constraint users_username_key unique (username)

@@ -7,6 +7,7 @@ export interface User {
   username: string
   password: string
   is_admin: boolean
+  blocked: boolean
   display_name: string | null
   created_at: string
 }

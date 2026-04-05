@@ -2,7 +2,17 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
 import { useFeeds, useDeleteFeed, useApproveFeed, useToggleFeed } from '../hooks/useFeeds'
-import { dbGetAllUsers, dbToggleAdmin, dbGetAllPapersAdmin, dbDeletePaper, dbApprovePaper } from '../lib/supabase'
+import {
+  dbGetAllUsers,
+  dbToggleAdmin,
+  dbGetAllPapersAdmin,
+  dbDeletePaper,
+  dbApprovePaper,
+  dbCreateUser,
+  dbBlockUser,
+  dbDeleteUser,
+  dbResetPassword,
+} from '../lib/supabase'
 import type { User, Paper } from '../types'
 import { formatRelative } from '../lib/utils'
 import toast from 'react-hot-toast'
@@ -10,11 +20,24 @@ import toast from 'react-hot-toast'
 const AdminPage: React.FC = () => {
   const navigate = useNavigate()
   const isAdmin = useAppStore((s) => s.isAdmin)
+  const currentUser = useAppStore((s) => s.currentUser)
   const [activeTab, setActiveTab] = useState<'feeds' | 'papers' | 'users'>('feeds')
   const [users, setUsers] = useState<User[]>([])
   const [papers, setPapers] = useState<Paper[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [loadingPapers, setLoadingPapers] = useState(false)
+
+  // Create user form
+  const [showCreateUser, setShowCreateUser] = useState(false)
+  const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newDisplayName, setNewDisplayName] = useState('')
+  const [newIsAdmin, setNewIsAdmin] = useState(false)
+  const [creating, setCreating] = useState(false)
+
+  // Reset password
+  const [resetUserId, setResetUserId] = useState<string | null>(null)
+  const [resetPw, setResetPw] = useState('')
 
   const { data: feeds = [] } = useFeeds()
   const deleteFeed = useDeleteFeed()
@@ -22,33 +45,92 @@ const AdminPage: React.FC = () => {
   const toggleFeed = useToggleFeed()
 
   useEffect(() => {
-    if (!isAdmin()) {
-      navigate('/')
-    }
+    if (!isAdmin()) navigate('/')
   }, [isAdmin, navigate])
 
+  const loadUsers = useCallback(() => {
+    setLoadingUsers(true)
+    dbGetAllUsers().then(setUsers).finally(() => setLoadingUsers(false))
+  }, [])
+
   useEffect(() => {
-    if (activeTab === 'users') {
-      setLoadingUsers(true)
-      dbGetAllUsers().then(setUsers).finally(() => setLoadingUsers(false))
-    }
+    if (activeTab === 'users') loadUsers()
     if (activeTab === 'papers') {
       setLoadingPapers(true)
       dbGetAllPapersAdmin().then(setPapers).finally(() => setLoadingPapers(false))
     }
-  }, [activeTab])
+  }, [activeTab, loadUsers])
+
+  // ---------- User actions ----------
+
+  const handleCreateUser = useCallback(async () => {
+    if (!newUsername.trim() || !newPassword.trim()) return
+    setCreating(true)
+    try {
+      const user = await dbCreateUser({
+        username: newUsername.trim(),
+        password: newPassword.trim(),
+        displayName: newDisplayName.trim(),
+        isAdmin: newIsAdmin,
+      })
+      setUsers((prev) => [...prev, user])
+      setNewUsername('')
+      setNewPassword('')
+      setNewDisplayName('')
+      setNewIsAdmin(false)
+      setShowCreateUser(false)
+      toast.success(`User "${user.username}" created`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create user')
+    } finally {
+      setCreating(false)
+    }
+  }, [newUsername, newPassword, newDisplayName, newIsAdmin])
 
   const handleToggleAdmin = useCallback(async (userId: string, currentAdmin: boolean) => {
     try {
       await dbToggleAdmin(userId, !currentAdmin)
-      setUsers((prev) =>
-        prev.map((u) => (u.id === userId ? { ...u, is_admin: !currentAdmin } : u))
-      )
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, is_admin: !currentAdmin } : u)))
       toast.success(currentAdmin ? 'Admin removed' : 'Admin granted')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed')
     }
   }, [])
+
+  const handleBlockUser = useCallback(async (userId: string, currentBlocked: boolean) => {
+    try {
+      await dbBlockUser(userId, !currentBlocked)
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, blocked: !currentBlocked } : u)))
+      toast.success(!currentBlocked ? 'User blocked' : 'User unblocked')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed')
+    }
+  }, [])
+
+  const handleDeleteUser = useCallback(async (userId: string, username: string) => {
+    if (!window.confirm(`Delete user "${username}"? This removes all their data.`)) return
+    try {
+      await dbDeleteUser(userId)
+      setUsers((prev) => prev.filter((u) => u.id !== userId))
+      toast.success('User deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed')
+    }
+  }, [])
+
+  const handleResetPassword = useCallback(async (userId: string) => {
+    if (!resetPw.trim()) return
+    try {
+      await dbResetPassword(userId, resetPw.trim())
+      setResetUserId(null)
+      setResetPw('')
+      toast.success('Password reset')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed')
+    }
+  }, [resetPw])
+
+  // ---------- Paper actions ----------
 
   const handleDeletePaper = useCallback(async (id: string) => {
     try {
@@ -89,7 +171,7 @@ const AdminPage: React.FC = () => {
             className={`tab ${activeTab === tab ? 'active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'feeds' ? `Feeds (${pendingFeeds.length} pending)` : tab === 'papers' ? 'Papers' : 'Users'}
+            {tab === 'feeds' ? `Feeds (${pendingFeeds.length} pending)` : tab === 'papers' ? 'Papers' : `Users (${users.length})`}
           </button>
         ))}
       </div>
@@ -112,57 +194,39 @@ const AdminPage: React.FC = () => {
                         <div className="feed-url">{feed.url}</div>
                       </div>
                       <span className="pending-badge">Pending</span>
-                      <button
-                        className="btn btn-sm btn-primary"
-                        onClick={() => approveFeed.mutate({ id: feed.id, approved: true })}
-                      >
-                        Approve
-                      </button>
-                      <button
-                        className="btn btn-sm btn-danger"
-                        onClick={() => deleteFeed.mutate(feed.id)}
-                      >
-                        Reject
-                      </button>
+                      <button className="btn btn-sm btn-primary" onClick={() => approveFeed.mutate({ id: feed.id, approved: true })}>Approve</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => deleteFeed.mutate(feed.id)}>Reject</button>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-
             <div>
               <h3 style={{ fontSize: '0.9rem', fontWeight: 650, marginBottom: '10px' }}>
                 Approved Feeds ({approvedFeeds.length})
               </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {approvedFeeds.map((feed) => (
-                  <div key={feed.id} className="feed-row">
-                    <div className="feed-color-dot" style={{ background: feed.color }} />
-                    <div className="feed-info">
-                      <div className="feed-name">{feed.name}</div>
-                      <div className="feed-url">{feed.url}</div>
+              {approvedFeeds.length === 0 ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text3)' }}>No approved feeds yet.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {approvedFeeds.map((feed) => (
+                    <div key={feed.id} className="feed-row">
+                      <div className="feed-color-dot" style={{ background: feed.color }} />
+                      <div className="feed-info">
+                        <div className="feed-name">{feed.name}</div>
+                        <div className="feed-url">{feed.url}</div>
+                      </div>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text3)' }}>{feed.topic}</span>
+                      <div className="feed-meta">{feed.last_fetched_at ? formatRelative(feed.last_fetched_at) : 'Never'}</div>
+                      <label className="toggle-switch">
+                        <input type="checkbox" checked={feed.active} onChange={() => toggleFeed.mutate({ id: feed.id, active: !feed.active })} />
+                        <span className="toggle-slider" />
+                      </label>
+                      <button className="btn btn-sm btn-danger" onClick={() => deleteFeed.mutate(feed.id)}>Delete</button>
                     </div>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text3)' }}>{feed.topic}</span>
-                    <div className="feed-meta">
-                      {feed.last_fetched_at ? formatRelative(feed.last_fetched_at) : 'Never'}
-                    </div>
-                    <label className="toggle-switch">
-                      <input
-                        type="checkbox"
-                        checked={feed.active}
-                        onChange={() => toggleFeed.mutate({ id: feed.id, active: !feed.active })}
-                      />
-                      <span className="toggle-slider" />
-                    </label>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => deleteFeed.mutate(feed.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -179,24 +243,15 @@ const AdminPage: React.FC = () => {
                 </div>
                 {papers.map((paper) => (
                   <div key={paper.id} className="saved-row">
-                    {!paper.approved && <span className="pending-badge">Hidden</span>}
-                    {paper.approved && <span className="approved-badge">Live</span>}
+                    {paper.approved ? <span className="approved-badge">Live</span> : <span className="pending-badge">Hidden</span>}
                     <div className="saved-row-title" style={{ cursor: 'pointer' }} onClick={() => navigate(`/reader/${paper.id}`)}>
                       {paper.title}
                     </div>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>{paper.source}</span>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => handleApprovePaper(paper.id, !paper.approved)}
-                    >
+                    <button className="btn btn-sm" onClick={() => handleApprovePaper(paper.id, !paper.approved)}>
                       {paper.approved ? 'Hide' : 'Approve'}
                     </button>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => handleDeletePaper(paper.id)}
-                    >
-                      Delete
-                    </button>
+                    <button className="btn btn-sm btn-danger" onClick={() => handleDeletePaper(paper.id)}>Delete</button>
                   </div>
                 ))}
               </div>
@@ -206,35 +261,109 @@ const AdminPage: React.FC = () => {
 
         {/* ---------- Users Tab ---------- */}
         {activeTab === 'users' && (
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontSize: '0.9rem', fontWeight: 650 }}>Users ({users.length})</h3>
+              <button className="btn btn-primary" onClick={() => setShowCreateUser(!showCreateUser)}>
+                {showCreateUser ? 'Cancel' : 'Create User'}
+              </button>
+            </div>
+
+            {showCreateUser && (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontSize: '0.87rem', fontWeight: 600 }}>New User</div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="Username"
+                    value={newUsername}
+                    onChange={(e) => setNewUsername(e.target.value)}
+                    style={{ flex: 1, minWidth: '140px' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    style={{ flex: 1, minWidth: '140px' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Display name (optional)"
+                    value={newDisplayName}
+                    onChange={(e) => setNewDisplayName(e.target.value)}
+                    style={{ flex: 1, minWidth: '140px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: 'var(--text2)' }}>
+                    <input
+                      type="checkbox"
+                      checked={newIsAdmin}
+                      onChange={(e) => setNewIsAdmin(e.target.checked)}
+                      style={{ width: 'auto', padding: 0 }}
+                    />
+                    Admin
+                  </label>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleCreateUser}
+                    disabled={creating || !newUsername.trim() || !newPassword.trim()}
+                  >
+                    {creating ? 'Creating...' : 'Create'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {loadingUsers ? (
               <div className="loading-center">Loading users...</div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {users.map((user) => (
-                  <div key={user.id} className="feed-row">
-                    <div
-                      className="sidebar-user-avatar"
-                      style={{ width: 32, height: 32, fontSize: '0.8rem' }}
-                    >
+                  <div key={user.id} className="feed-row" style={{ opacity: user.blocked ? 0.5 : 1 }}>
+                    <div className="sidebar-user-avatar" style={{ width: 32, height: 32, fontSize: '0.8rem' }}>
                       {(user.display_name?.[0] ?? user.username[0]).toUpperCase()}
                     </div>
                     <div className="feed-info">
                       <div className="feed-name">
                         {user.display_name ?? user.username}
+                        {user.blocked && <span style={{ color: 'var(--coral)', fontSize: '0.72rem', marginLeft: '6px' }}>(blocked)</span>}
                       </div>
                       <div className="feed-url">@{user.username}</div>
                     </div>
                     {user.is_admin && <span className="admin-badge">Admin</span>}
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text3)' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text3)', whiteSpace: 'nowrap' }}>
                       {formatRelative(user.created_at)}
                     </span>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => handleToggleAdmin(user.id, user.is_admin)}
-                    >
-                      {user.is_admin ? 'Remove Admin' : 'Make Admin'}
-                    </button>
+
+                    {/* Don't let admin modify themselves */}
+                    {user.id !== currentUser?.id && (
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        <button className="btn btn-sm" onClick={() => handleToggleAdmin(user.id, user.is_admin)}>
+                          {user.is_admin ? 'Revoke Admin' : 'Make Admin'}
+                        </button>
+                        <button className="btn btn-sm" onClick={() => handleBlockUser(user.id, user.blocked)}>
+                          {user.blocked ? 'Unblock' : 'Block'}
+                        </button>
+                        {resetUserId === user.id ? (
+                          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <input
+                              type="text"
+                              placeholder="New password"
+                              value={resetPw}
+                              onChange={(e) => setResetPw(e.target.value)}
+                              style={{ width: '120px', padding: '3px 8px', fontSize: '0.78rem' }}
+                            />
+                            <button className="btn btn-sm btn-primary" onClick={() => handleResetPassword(user.id)} disabled={!resetPw.trim()}>Set</button>
+                            <button className="btn btn-sm" onClick={() => { setResetUserId(null); setResetPw('') }}>Cancel</button>
+                          </div>
+                        ) : (
+                          <button className="btn btn-sm" onClick={() => setResetUserId(user.id)}>Reset PW</button>
+                        )}
+                        <button className="btn btn-sm btn-danger" onClick={() => handleDeleteUser(user.id, user.username)}>Delete</button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

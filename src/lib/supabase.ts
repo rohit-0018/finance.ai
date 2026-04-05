@@ -28,17 +28,24 @@ export async function dbLogin(username: string, password: string): Promise<User>
 
   if (error) throw new Error(`Login failed: ${error.message}`)
   if (!data) throw new Error('Invalid username or password')
+  if ((data as User).blocked) throw new Error('Your account has been blocked. Contact admin.')
   return data as User
 }
 
-export async function dbRegister(username: string, password: string, displayName: string): Promise<User> {
+export async function dbCreateUser(opts: {
+  username: string
+  password: string
+  displayName: string
+  isAdmin: boolean
+}): Promise<User> {
   const { data, error } = await supabase
     .from('users')
     .insert({
-      username,
-      password,
-      is_admin: false,
-      display_name: displayName || username,
+      username: opts.username,
+      password: opts.password,
+      is_admin: opts.isAdmin,
+      blocked: false,
+      display_name: opts.displayName || opts.username,
     })
     .select()
     .single()
@@ -47,9 +54,36 @@ export async function dbRegister(username: string, password: string, displayName
     if (error.message.includes('duplicate') || error.message.includes('unique')) {
       throw new Error('Username already taken')
     }
-    throw new Error(`Registration failed: ${error.message}`)
+    throw new Error(`Failed to create user: ${error.message}`)
   }
   return data as User
+}
+
+export async function dbBlockUser(userId: string, blocked: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('users')
+    .update({ blocked })
+    .eq('id', userId)
+
+  if (error) throw new Error(`Failed to update user: ${error.message}`)
+}
+
+export async function dbDeleteUser(userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('users')
+    .delete()
+    .eq('id', userId)
+
+  if (error) throw new Error(`Failed to delete user: ${error.message}`)
+}
+
+export async function dbResetPassword(userId: string, newPassword: string): Promise<void> {
+  const { error } = await supabase
+    .from('users')
+    .update({ password: newPassword })
+    .eq('id', userId)
+
+  if (error) throw new Error(`Failed to reset password: ${error.message}`)
 }
 
 export async function dbGetAllUsers(): Promise<User[]> {

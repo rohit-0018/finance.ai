@@ -1,14 +1,12 @@
 import React, { useState, useCallback } from 'react'
-import { dbLogin, dbRegister } from '../lib/supabase'
+import { dbLogin } from '../lib/supabase'
 import { useAppStore } from '../store'
 import toast from 'react-hot-toast'
 
 const LoginPage: React.FC = () => {
   const setCurrentUser = useAppStore((s) => s.setCurrentUser)
-  const [mode, setMode] = useState<'login' | 'register'>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [displayName, setDisplayName] = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = useCallback(
@@ -18,22 +16,16 @@ const LoginPage: React.FC = () => {
 
       setLoading(true)
       try {
-        if (mode === 'login') {
-          const user = await dbLogin(username.trim(), password)
-          setCurrentUser(user)
-          toast.success(`Welcome back, ${user.display_name ?? user.username}!`)
-        } else {
-          const user = await dbRegister(username.trim(), password, displayName.trim())
-          setCurrentUser(user)
-          toast.success('Account created!')
-        }
+        const user = await dbLogin(username.trim(), password)
+        setCurrentUser(user)
+        toast.success(`Welcome, ${user.display_name ?? user.username}!`)
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Authentication failed')
+        toast.error(err instanceof Error ? err.message : 'Login failed')
       } finally {
         setLoading(false)
       }
     },
-    [mode, username, password, displayName, setCurrentUser]
+    [username, password, setCurrentUser]
   )
 
   return (
@@ -46,9 +38,7 @@ const LoginPage: React.FC = () => {
           </span>
         </div>
 
-        <p className="login-subtitle">
-          {mode === 'login' ? 'Sign in to your account' : 'Create a new account'}
-        </p>
+        <p className="login-subtitle">Sign in to your account</p>
 
         <form onSubmit={handleSubmit} className="login-form">
           <div className="login-field">
@@ -64,19 +54,6 @@ const LoginPage: React.FC = () => {
             />
           </div>
 
-          {mode === 'register' && (
-            <div className="login-field">
-              <label htmlFor="displayName">Display Name</label>
-              <input
-                id="displayName"
-                type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Your name (optional)"
-              />
-            </div>
-          )}
-
           <div className="login-field">
             <label htmlFor="password">Password</label>
             <input
@@ -85,7 +62,7 @@ const LoginPage: React.FC = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter password"
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              autoComplete="current-password"
             />
           </div>
 
@@ -94,23 +71,13 @@ const LoginPage: React.FC = () => {
             className="btn btn-primary login-submit"
             disabled={loading || !username.trim() || !password.trim()}
           >
-            {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
 
-        <div className="login-switch">
-          {mode === 'login' ? (
-            <>
-              Don&apos;t have an account?{' '}
-              <button onClick={() => setMode('register')}>Sign up</button>
-            </>
-          ) : (
-            <>
-              Already have an account?{' '}
-              <button onClick={() => setMode('login')}>Sign in</button>
-            </>
-          )}
-        </div>
+        <p style={{ fontSize: '0.78rem', color: 'var(--text3)', textAlign: 'center' }}>
+          Contact your admin if you need an account.
+        </p>
       </div>
     </div>
   )
