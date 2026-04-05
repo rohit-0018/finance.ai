@@ -1,6 +1,6 @@
 export type ReadStatus = 'unread' | 'reading' | 'done'
 export type NoteType = 'note' | 'insight' | 'question' | 'highlight'
-export type PaperSource = 'arXiv' | 'SSRN' | 'HuggingFace' | 'NeurIPS' | 'ICML' | 'ICLR' | 'RSS' | string
+export type PaperSource = 'arXiv' | 'SSRN' | 'HuggingFace' | 'NeurIPS' | 'ICML' | 'ICLR' | 'RSS' | 'Article' | string
 
 export interface User {
   id: string
@@ -77,6 +77,35 @@ export interface RSSFeed {
   created_at: string
 }
 
+export interface Article {
+  id: string
+  url: string
+  title: string
+  content: string
+  summary: string | null
+  topic: string
+  tags: string[]
+  added_by: string | null
+  created_at: string
+}
+
+export interface UserTopic {
+  id: string
+  user_id: string
+  topic: string
+  rating: number
+  created_at: string
+}
+
+export interface DailyBrief {
+  id: string
+  user_id: string
+  content: string
+  topics: string[]
+  paper_count: number
+  created_at: string
+}
+
 export interface PaperDigest {
   problem: string
   method: string
@@ -89,9 +118,12 @@ export interface AppStats {
   totalPapers: number
   savedPapers: number
   totalNotes: number
+  topicsFollowed: number
+  articlesRead: number
+  streak: number
 }
 
-export type NavigationPage = 'feed' | 'reader' | 'saved' | 'notes' | 'feeds' | 'settings'
+export type NavigationPage = 'feed' | 'reader' | 'saved' | 'notes' | 'feeds' | 'interests' | 'settings'
 
 export interface RawRSSItem {
   title: string

@@ -249,3 +249,107 @@ function formatMarkdown(text: string): string {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\n/g, '<br/>')
 }
+
+// ---------- Article Extraction ----------
+
+export async function summarizeArticle(
+  title: string,
+  content: string
+): Promise<{ summary: string; topic: string; tags: string[] }> {
+  const client = getClient()
+  const trimmed = content.slice(0, 8000)
+
+  const response = await client.chat.completions.create({
+    model: MODEL,
+    max_tokens: 1024,
+    messages: [
+      {
+        role: 'user',
+        content: `Analyze this article and return a JSON object with:
+- summary: a 2-3 sentence summary
+- topic: the main topic category (e.g., "AI", "Machine Learning", "NLP", "Technology", "Science")
+- tags: array of 3-5 keyword tags
+
+Title: "${title}"
+Content: "${trimmed}"
+
+Return ONLY the JSON object, no other text.`,
+      },
+    ],
+  })
+
+  const text = response.choices[0]?.message?.content ?? ''
+  const jsonStr = extractJSON(text)
+  const parsed = JSON.parse(jsonStr) as { summary: string; topic: string; tags: string[] }
+  return parsed
+}
+
+// ---------- Daily Brief ----------
+
+export async function generateDailyBrief(
+  topics: string[],
+  recentPapers: Array<{ title: string; finding: string | null; topic: string }>
+): Promise<string> {
+  const client = getClient()
+
+  const paperList = recentPapers
+    .slice(0, 20)
+    .map((p, i) => `${i + 1}. [${p.topic}] "${p.title}" — ${p.finding ?? 'No summary'}`)
+    .join('\n')
+
+  const response = await client.chat.completions.create({
+    model: MODEL,
+    max_tokens: 2048,
+    messages: [
+      {
+        role: 'user',
+        content: `You are a research briefing assistant. The user follows these topics: ${topics.join(', ')}.
+
+Here are recent papers and articles:
+${paperList}
+
+Write a personalized daily brief that:
+1. Highlights the most important developments in their interest areas
+2. Draws connections between papers where relevant
+3. Suggests what to read first and why
+4. Notes any emerging trends
+
+Keep it concise and actionable. Use markdown formatting with **bold** for key terms and bullet points.`,
+      },
+    ],
+  })
+
+  const text = response.choices[0]?.message?.content ?? ''
+  return formatMarkdown(text)
+}
+
+// ---------- Article Chat ----------
+
+export async function articleChat(
+  article: { title: string; content: string; summary: string | null },
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<string> {
+  const client = getClient()
+  const trimmedContent = article.content.slice(0, 6000)
+
+  const response = await client.chat.completions.create({
+    model: MODEL,
+    max_tokens: 2048,
+    messages: [
+      {
+        role: 'system',
+        content: `You are a knowledge assistant. Help the user understand this article.
+
+Title: "${article.title}"
+Summary: ${article.summary ?? 'Not available'}
+Content: ${trimmedContent}
+
+Answer questions concisely and accurately. Use markdown formatting.`,
+      },
+      ...messages,
+    ],
+  })
+
+  const text = response.choices[0]?.message?.content ?? ''
+  return formatMarkdown(text)
+}

@@ -1362,6 +1362,106 @@ select {
   }
 }
 
+/* ---------- Topic Interests ---------- */
+
+.topic-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+}
+
+.topic-row-name {
+  font-weight: 550;
+  font-size: 0.87rem;
+  min-width: 120px;
+}
+
+.star-rating {
+  display: flex;
+  gap: 2px;
+}
+
+.star-btn {
+  font-size: 1.1rem;
+  color: var(--border2);
+  transition: color 0.1s, transform 0.1s;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.star-btn:hover {
+  transform: scale(1.2);
+}
+
+.star-btn.active {
+  color: var(--amber);
+}
+
+.topic-row-label {
+  font-size: 0.75rem;
+  color: var(--text3);
+  min-width: 60px;
+}
+
+/* ---------- Brief Card ---------- */
+
+.brief-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.brief-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.brief-content {
+  font-size: 0.87rem;
+  line-height: 1.7;
+  color: var(--text2);
+}
+
+.brief-content strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.brief-content em {
+  color: var(--text2);
+}
+
+.brief-content code {
+  background: var(--bg3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+/* ---------- Article Chat Panel ---------- */
+
+.article-chat-panel {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.article-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
 /* ---------- Login Page ---------- */
 
 .login-page {

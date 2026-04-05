@@ -21,6 +21,9 @@ model users {
   papers       papers[]       @relation("added_by")
   rss_feeds    rss_feeds[]    @relation("feed_added_by")
   fetch_log    fetch_log[]    @relation("fetched_by")
+  articles     articles[]     @relation("article_added_by")
+  user_topics  user_topics[]
+  daily_briefs daily_briefs[]
 }
 
 model rss_feeds {
@@ -110,4 +113,38 @@ model fetch_log {
   fetched_by   String?  @db.Uuid
   created_at   DateTime @default(now()) @db.Timestamptz()
   user         users?   @relation("fetched_by", fields: [fetched_by], references: [id], onDelete: SetNull)
+}
+
+model articles {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  url        String   @unique
+  title      String
+  content    String
+  summary    String?
+  topic      String   @default("General")
+  tags       Json     @default("[]")
+  added_by   String?  @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz()
+  user       users?   @relation("article_added_by", fields: [added_by], references: [id], onDelete: SetNull)
+}
+
+model user_topics {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id    String   @db.Uuid
+  topic      String
+  rating     Int      @default(3)
+  created_at DateTime @default(now()) @db.Timestamptz()
+  user       users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, topic])
+}
+
+model daily_briefs {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id     String   @db.Uuid
+  content     String
+  topics      Json     @default("[]")
+  paper_count Int      @default(0)
+  created_at  DateTime @default(now()) @db.Timestamptz()
+  user        users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }

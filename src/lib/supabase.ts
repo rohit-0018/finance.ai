@@ -9,6 +9,9 @@ import type {
   NoteType,
   AppStats,
   User,
+  Article,
+  UserTopic,
+  DailyBrief,
 } from '../types'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -421,16 +424,22 @@ export async function dbUpdateFeedFetched(id: string): Promise<void> {
 // ---------- Stats (scoped to user for saved/notes) ----------
 
 export async function dbGetStats(userId: string): Promise<AppStats> {
-  const [papersRes, savedRes, notesRes] = await Promise.all([
+  const [papersRes, savedRes, notesRes, topicsRes, articlesRes, doneRes] = await Promise.all([
     supabase.from('papers').select('id', { count: 'exact', head: true }).eq('approved', true),
     supabase.from('saved_papers').select('id', { count: 'exact', head: true }).eq('user_id', userId),
     supabase.from('notes').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+    supabase.from('user_topics').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+    supabase.from('articles').select('id', { count: 'exact', head: true }),
+    supabase.from('saved_papers').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('read_status', 'done'),
   ])
 
   return {
     totalPapers: papersRes.count ?? 0,
     savedPapers: savedRes.count ?? 0,
     totalNotes: notesRes.count ?? 0,
+    topicsFollowed: topicsRes.count ?? 0,
+    articlesRead: articlesRes.count ?? 0,
+    streak: doneRes.count ?? 0,
   }
 }
 
@@ -446,4 +455,117 @@ export async function dbLogFetch(
   await supabase
     .from('fetch_log')
     .insert({ source, topic, papers_count: papersCount, errors, fetched_by: userId ?? null })
+}
+
+// ---------- Articles ----------
+
+export async function dbSaveArticle(article: {
+  url: string
+  title: string
+  content: string
+  summary?: string
+  topic: string
+  tags: string[]
+  addedBy?: string
+}): Promise<Article> {
+  const { data, error } = await supabase
+    .from('articles')
+    .upsert({
+      url: article.url,
+      title: article.title,
+      content: article.content,
+      summary: article.summary ?? null,
+      topic: article.topic,
+      tags: article.tags,
+      added_by: article.addedBy ?? null,
+    }, { onConflict: 'url' })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Failed to save article: ${error.message}`)
+  return data as Article
+}
+
+export async function dbGetArticles(): Promise<Article[]> {
+  const { data, error } = await supabase
+    .from('articles')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error) throw new Error(`Failed to fetch articles: ${error.message}`)
+  return (data ?? []) as Article[]
+}
+
+export async function dbDeleteArticle(id: string): Promise<void> {
+  const { error } = await supabase.from('articles').delete().eq('id', id)
+  if (error) throw new Error(`Failed to delete article: ${error.message}`)
+}
+
+// ---------- User Topics ----------
+
+export async function dbGetUserTopics(userId: string): Promise<UserTopic[]> {
+  const { data, error } = await supabase
+    .from('user_topics')
+    .select('*')
+    .eq('user_id', userId)
+    .order('rating', { ascending: false })
+
+  if (error) throw new Error(`Failed to fetch topics: ${error.message}`)
+  return (data ?? []) as UserTopic[]
+}
+
+export async function dbUpsertUserTopic(userId: string, topic: string, rating: number): Promise<UserTopic> {
+  const { data, error } = await supabase
+    .from('user_topics')
+    .upsert({ user_id: userId, topic, rating }, { onConflict: 'user_id,topic' })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Failed to save topic: ${error.message}`)
+  return data as UserTopic
+}
+
+export async function dbDeleteUserTopic(userId: string, id: string): Promise<void> {
+  const { error } = await supabase
+    .from('user_topics')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId)
+
+  if (error) throw new Error(`Failed to remove topic: ${error.message}`)
+}
+
+// ---------- Daily Briefs ----------
+
+export async function dbSaveBrief(brief: {
+  userId: string
+  content: string
+  topics: string[]
+  paperCount: number
+}): Promise<DailyBrief> {
+  const { data, error } = await supabase
+    .from('daily_briefs')
+    .insert({
+      user_id: brief.userId,
+      content: brief.content,
+      topics: brief.topics,
+      paper_count: brief.paperCount,
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Failed to save brief: ${error.message}`)
+  return data as DailyBrief
+}
+
+export async function dbGetBriefs(userId: string): Promise<DailyBrief[]> {
+  const { data, error } = await supabase
+    .from('daily_briefs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(10)
+
+  if (error) throw new Error(`Failed to fetch briefs: ${error.message}`)
+  return (data ?? []) as DailyBrief[]
 }

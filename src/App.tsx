@@ -11,6 +11,8 @@ const ReaderPage = lazy(() => import('./pages/ReaderPage'))
 const SavedPage = lazy(() => import('./pages/SavedPage'))
 const NotesPage = lazy(() => import('./pages/NotesPage'))
 const FeedsPage = lazy(() => import('./pages/FeedsPage'))
+const ArticlesPage = lazy(() => import('./pages/ArticlesPage'))
+const InterestsPage = lazy(() => import('./pages/InterestsPage'))
 const AdminPage = lazy(() => import('./pages/SettingsPage'))
 
 const queryClient = new QueryClient({
@@ -36,6 +38,8 @@ const AuthenticatedApp: React.FC = () => (
         <Route path="/saved" element={<SavedPage />} />
         <Route path="/notes" element={<NotesPage />} />
         <Route path="/feeds" element={<FeedsPage />} />
+        <Route path="/articles" element={<ArticlesPage />} />
+        <Route path="/interests" element={<InterestsPage />} />
         <Route path="/admin" element={<AdminPage />} />
       </Routes>
     </Suspense>
