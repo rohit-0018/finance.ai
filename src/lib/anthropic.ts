@@ -3,8 +3,8 @@ import { z } from 'zod'
 import type { Paper, PaperDigest, NoteType } from '../types'
 
 const getClient = () => {
-  const key = import.meta.env.VITE_OPENAI_KEY
-  if (!key) throw new Error('VITE_OPENAI_KEY is not set')
+  const key = import.meta.env.OPENAI_KEY
+  if (!key) throw new Error('OPENAI_KEY is not set')
   return new OpenAI({ apiKey: key, dangerouslyAllowBrowser: true })
 }
 
