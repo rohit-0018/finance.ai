@@ -9,7 +9,14 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:push": "prisma db push",
+    "db:pull": "prisma db pull",
+    "db:studio": "prisma studio",
+    "db:generate": "prisma generate",
+    "db:seed": "prisma db seed",
+    "db:migrate": "prisma migrate dev",
+    "db:reset": "prisma migrate reset"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
@@ -24,12 +31,15 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@prisma/client": "^7.6.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "dotenv": "^17.4.0",
     "jsdom": "^25.0.1",
+    "prisma": "^7.6.0",
     "typescript": "^5.7.3",
     "vite": "^5.4.14",
     "vitest": "^2.1.8"
