@@ -69,12 +69,12 @@ const App: React.FC = () => {
         position="bottom-right"
         toastOptions={{
           style: {
-            background: '#fff',
-            color: '#1a1a2e',
-            border: '1px solid #e5e7eb',
+            background: 'var(--bg)',
+            color: 'var(--text)',
+            border: '1px solid var(--border)',
             fontFamily: "'Inter', sans-serif",
             fontSize: '0.85rem',
-            boxShadow: '0 4px 6px rgba(0,0,0,0.06)',
+            boxShadow: 'var(--shadow-md)',
           },
         }}
       />

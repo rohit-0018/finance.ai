@@ -1,6 +1,14 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { useAppStore } from '../store'
+import { useAppStore, type ThemeId } from '../store'
+
+const THEMES: Array<{ id: ThemeId; label: string; dot: string }> = [
+  { id: 'light', label: 'Light', dot: '#ffffff' },
+  { id: 'dark', label: 'Dark', dot: '#1a1a2e' },
+  { id: 'sepia', label: 'Sepia', dot: '#f4ecd8' },
+  { id: 'midnight', label: 'Midnight', dot: '#0d1117' },
+  { id: 'forest', label: 'Forest', dot: '#1a2e1a' },
+]
 
 function NavIcon({ icon }: { icon: string }) {
   const props = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
@@ -39,6 +47,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const currentUser = useAppStore((s) => s.currentUser)
   const isAdmin = useAppStore((s) => s.isAdmin)
   const logout = useAppStore((s) => s.logout)
+  const theme = useAppStore((s) => s.theme)
+  const setTheme = useAppStore((s) => s.setTheme)
   const [mobileOpen, setMobileOpen] = useState(false)
 
   useEffect(() => {
@@ -83,7 +93,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-logo">
-          <div className="logo-icon" />
+          <svg className="logo-svg" width="22" height="22" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="6" fill="var(--accent)" />
+            <path d="M8 7h10a4 4 0 010 8H8zm0 10h12a4 4 0 010 8H8z" fill="var(--bg)" opacity=".9" />
+            <circle cx="24" cy="24" r="5" fill="var(--green)" />
+            <path d="M22 24l1.5 1.5L27 22" stroke="var(--bg)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           <span>@paperai</span>
         </div>
 
@@ -100,34 +115,50 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           ))}
         </nav>
 
-        {currentUser && (
-          <div className="sidebar-user">
-            <div className="sidebar-user-avatar">
-              {userInitial.toUpperCase()}
-            </div>
-            <div className="sidebar-user-info">
-              <div className="sidebar-user-name">
-                {currentUser.display_name ?? currentUser.username}
-              </div>
-              <div className="sidebar-user-role">
-                {currentUser.is_admin ? 'Admin' : 'Member'}
-              </div>
-            </div>
-            <button className="btn btn-sm" onClick={handleLogout}>
-              Logout
-            </button>
+        {/* Bottom section: theme + user + collapse */}
+        <div className="sidebar-bottom">
+          <div className="sidebar-theme">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                className={`theme-dot ${theme === t.id ? 'active' : ''}`}
+                style={{ background: t.dot, borderColor: t.dot === '#ffffff' ? 'var(--border2)' : t.dot }}
+                onClick={() => setTheme(t.id)}
+                title={t.label}
+              />
+            ))}
           </div>
-        )}
 
-        <div className="sidebar-footer">
+          {currentUser && (
+            <div className="sidebar-user">
+              <div className="sidebar-user-avatar">
+                {userInitial.toUpperCase()}
+              </div>
+              <div className="sidebar-user-info">
+                <div className="sidebar-user-name">
+                  {currentUser.display_name ?? currentUser.username}
+                </div>
+                <div className="sidebar-user-role">
+                  {currentUser.is_admin ? 'Admin' : 'Member'}
+                </div>
+              </div>
+              <button className="sidebar-logout" onClick={handleLogout} title="Logout">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
           <button
             className="collapse-btn"
             onClick={() => setCollapsed(!collapsed)}
+            title={collapsed ? 'Expand' : 'Collapse'}
           >
             <svg
-              width="18" height="18" viewBox="0 0 24 24"
+              width="16" height="16" viewBox="0 0 24 24"
               fill="none" stroke="currentColor" strokeWidth="2"
-              style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
+              style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s ease' }}
             >
               <polyline points="11 17 6 12 11 7" />
               <polyline points="18 17 13 12 18 7" />

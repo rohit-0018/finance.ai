@@ -1,12 +1,18 @@
 import { create } from 'zustand'
 import type { Paper, QAMessage, NavigationPage, User } from '../types'
 
+export type ThemeId = 'light' | 'dark' | 'sepia' | 'midnight' | 'forest'
+
 interface AppState {
   // Auth
   currentUser: User | null
   setCurrentUser: (user: User | null) => void
   isAdmin: () => boolean
   logout: () => void
+
+  // Theme
+  theme: ThemeId
+  setTheme: (theme: ThemeId) => void
 
   // UI
   activePage: NavigationPage
@@ -55,6 +61,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   logout: () => {
     localStorage.removeItem('papermind_user')
     set({ currentUser: null, savedIds: new Set(), qaMessages: [] })
+  },
+
+  // Theme
+  theme: (localStorage.getItem('paperai_theme') as ThemeId) || 'light',
+
+  setTheme: (theme) => {
+    localStorage.setItem('paperai_theme', theme)
+    document.documentElement.setAttribute('data-theme', theme)
+    set({ theme })
   },
 
   // UI

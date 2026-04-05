@@ -32,8 +32,13 @@ const LoginPage: React.FC = () => {
     <div className="login-page">
       <div className="login-card">
         <div className="login-logo">
-          <div className="logo-icon" style={{ width: 28, height: 28, background: 'var(--accent)', borderRadius: 8 }} />
-          <span style={{ fontWeight: 700, fontSize: '1.2rem', letterSpacing: '-0.03em' }}>
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="6" fill="var(--accent)" />
+            <path d="M8 7h10a4 4 0 010 8H8zm0 10h12a4 4 0 010 8H8z" fill="var(--bg)" opacity=".9" />
+            <circle cx="24" cy="24" r="5" fill="var(--green)" />
+            <path d="M22 24l1.5 1.5L27 22" stroke="var(--bg)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span style={{ fontWeight: 700, fontSize: '1.3rem', letterSpacing: '-0.03em' }}>
             @paperai
           </span>
         </div>

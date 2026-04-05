@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePaper } from '../hooks/usePapers'
 import { useNotes, useSaveNote } from '../hooks/useNotes'
-import { useToggleSave } from '../hooks/useSaved'
+import { useToggleSave, useUpdateReadStatus } from '../hooks/useSaved'
 import { useAppStore } from '../store'
 import { generateDeepAnalysis, claudeChat } from '../lib/anthropic'
 import { dbUpdatePaperAnalysis } from '../lib/supabase'
@@ -46,6 +46,7 @@ const ReaderPage: React.FC = () => {
   const { data: notes = [] } = useNotes(id ?? '')
   const savedIds = useAppStore((s) => s.savedIds)
   const toggleSave = useToggleSave()
+  const updateStatus = useUpdateReadStatus()
   const saveNote = useSaveNote()
 
   const [mode, setMode] = useState<ReadingMode>('researcher')
@@ -130,6 +131,11 @@ const ReaderPage: React.FC = () => {
           <button className={`btn btn-sm ${isSaved ? 'btn-primary' : ''}`} onClick={() => toggleSave.mutate({ paperId: paper.id, saved: isSaved })}>
             {isSaved ? 'Saved' : 'Save'}
           </button>
+          {isSaved && (
+            <button className="btn btn-sm" onClick={() => updateStatus.mutate({ paperId: paper.id, status: 'done' })} style={{ color: 'var(--green)' }}>
+              Mark Read
+            </button>
+          )}
           <button className="btn btn-sm" onClick={() => setChatOpen(!chatOpen)}>
             {chatOpen ? 'Hide Chat' : 'Ask AI'}
           </button>
