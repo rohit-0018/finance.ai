@@ -2,15 +2,18 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LifeLayout from '../LifeLayout'
 import { useLifeStore } from '../store'
-import { listProjects, createProject } from '../lib/db'
+import { listProjects, createProject, projectFinishRate, createTask, listTasksForProject } from '../lib/db'
 import type { LifeProject, LifeCategory } from '../types'
+import { todayLocal } from '../lib/time'
 
 const CATS: LifeCategory[] = ['office', 'personal', 'health', 'learn']
 
 const ProjectsPage: React.FC = () => {
   const navigate = useNavigate()
   const lifeUser = useLifeStore((s) => s.lifeUser)
+  const activeWorkspace = useLifeStore((s) => s.activeWorkspace)
   const [projects, setProjects] = useState<LifeProject[]>([])
+  const [rates, setRates] = useState<Map<string, { rate: number; done: number; open: number }>>(new Map())
   const [loading, setLoading] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
@@ -21,11 +24,52 @@ const ProjectsPage: React.FC = () => {
     if (!lifeUser) return
     setLoading(true)
     try {
-      setProjects(await listProjects(lifeUser.id))
+      const list = await listProjects(lifeUser.id, activeWorkspace?.id)
+      setProjects(list)
+      // Compute finish-rate + run the last-10% detector in parallel. Detector
+      // pins a "ship it" task to today if a project has been stuck between 80%
+      // and 95% done for 5+ days without an existing ship-it task.
+      const entries = await Promise.all(
+        list.map(async (p) => {
+          const r = await projectFinishRate(lifeUser.id, p.id).catch(() => ({ rate: 0, done: 0, open: 0 }))
+          return [p.id, r] as const
+        })
+      )
+      const map = new Map<string, { rate: number; done: number; open: number }>()
+      for (const [id, r] of entries) map.set(id, r)
+      setRates(map)
+
+      // Last-10% detector — best-effort, non-blocking.
+      ;(async () => {
+        if (!activeWorkspace) return
+        const stuckThresholdMs = 5 * 24 * 60 * 60_000
+        for (const p of list) {
+          const r = map.get(p.id)
+          if (!r || r.rate < 0.8 || r.rate >= 0.95) continue
+          if (Date.now() - new Date(p.updated_at).getTime() < stuckThresholdMs) continue
+          try {
+            const tasks = await listTasksForProject(lifeUser.id, p.id, 20)
+            const hasShipIt = tasks.some(
+              (t) => /^ship it\b/i.test(t.title) && t.status !== 'done'
+            )
+            if (hasShipIt) continue
+            await createTask({
+              userId: lifeUser.id,
+              workspaceId: activeWorkspace.id,
+              project_id: p.id,
+              title: `Ship it — ${p.name}`,
+              notes: `Auto-created: project sat between 80–95% done for >5 days. Close out the last few items or drop them.`,
+              priority: 1,
+              scheduled_for: todayLocal(lifeUser.timezone),
+              source: 'agent',
+            })
+          } catch {/* ignore */}
+        }
+      })()
     } finally {
       setLoading(false)
     }
-  }, [lifeUser])
+  }, [lifeUser, activeWorkspace])
 
   useEffect(() => {
     load()
@@ -33,7 +77,13 @@ const ProjectsPage: React.FC = () => {
 
   const submit = async () => {
     if (!lifeUser || !name.trim()) return
-    await createProject({ userId: lifeUser.id, name: name.trim(), description, category })
+    await createProject({
+      userId: lifeUser.id,
+      workspaceId: activeWorkspace?.id,
+      name: name.trim(),
+      description,
+      category,
+    })
     setName('')
     setDescription('')
     setCategory('personal')
@@ -103,6 +153,20 @@ const ProjectsPage: React.FC = () => {
               <span className={`life-pill ${p.category}`}>{p.category}</span>
               <span className={`life-pill ${p.health}`}>{p.health}</span>
               <span>status: {p.status}</span>
+              {(() => {
+                const r = rates.get(p.id)
+                if (!r || r.done + r.open === 0) return null
+                const pct = Math.round(r.rate * 100)
+                const cls = pct >= 70 ? 'good' : pct >= 40 ? 'warn' : 'bad'
+                return (
+                  <span
+                    className={`life-align-pill ${cls}`}
+                    title={`${r.done} done of ${r.done + r.open} tasks`}
+                  >
+                    finish {pct}%
+                  </span>
+                )
+              })()}
             </div>
             {p.description && (
               <p style={{ margin: '8px 0 0', fontSize: '0.83rem', color: 'var(--text-muted, #888)' }}>

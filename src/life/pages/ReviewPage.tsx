@@ -13,6 +13,14 @@ import { lifeDb } from '../lib/supabaseLife'
 import { weeklySynthesis } from '../lib/agent'
 import type { LifeProject, LifeGoal, LifeProjectPulse } from '../types'
 import { todayLocal } from '../lib/time'
+import {
+  planHitRate,
+  estimationTrend,
+  dropsByReason,
+  type PlanHitRate,
+  type EstimationTrend,
+} from '../lib/reviewMetrics'
+import { runMonthlyRetro, type MonthlyRetroOutput } from '../lib/monthlyRetro'
 
 function shiftDate(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`)
@@ -28,6 +36,11 @@ const ReviewPage: React.FC = () => {
   const [streak, setStreak] = useState(0)
   const [projects, setProjects] = useState<LifeProject[]>([])
   const [goals, setGoals] = useState<LifeGoal[]>([])
+  const [hitRate, setHitRate] = useState<PlanHitRate | null>(null)
+  const [estTrend, setEstTrend] = useState<EstimationTrend | null>(null)
+  const [drops, setDrops] = useState<Array<{ keyword: string; count: number }>>([])
+  const [retro, setRetro] = useState<MonthlyRetroOutput | null>(null)
+  const [runningRetro, setRunningRetro] = useState(false)
   const [synthesis, setSynthesis] = useState<string | null>(null)
   const [loadingSyn, setLoadingSyn] = useState(false)
 
@@ -37,19 +50,37 @@ const ReviewPage: React.FC = () => {
 
   const load = useCallback(async () => {
     if (!lifeUser) return
-    const [w, m, s, projs, gs] = await Promise.all([
+    const [w, m, s, projs, gs, hr, et, dr] = await Promise.all([
       getRangeStats(lifeUser.id, weekFrom, today),
       getRangeStats(lifeUser.id, monthFrom, today),
       getStreak(lifeUser.id, today),
       listProjects(lifeUser.id),
       listGoals(lifeUser.id),
+      planHitRate(lifeUser.id, 30),
+      estimationTrend(lifeUser.id, 30),
+      dropsByReason(lifeUser.id, 30),
     ])
     setWeekStats(w)
     setMonthStats(m)
     setStreak(s)
     setProjects(projs)
     setGoals(gs)
+    setHitRate(hr)
+    setEstTrend(et)
+    setDrops(dr)
   }, [lifeUser, weekFrom, monthFrom, today])
+
+  const handleRetro = async () => {
+    if (!lifeUser || runningRetro) return
+    setRunningRetro(true)
+    try {
+      setRetro(await runMonthlyRetro(lifeUser))
+    } catch (err) {
+      alert((err as Error).message)
+    } finally {
+      setRunningRetro(false)
+    }
+  }
 
   useEffect(() => {
     load()
@@ -124,6 +155,85 @@ const ReviewPage: React.FC = () => {
       <p style={{ margin: '0 0 18px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
         Last 7 days: <strong>{weekFrom}</strong> → <strong>{today}</strong>
       </p>
+
+      {/* Phase 8 honest-feedback cards */}
+      <div className="life-dash" style={{ marginBottom: 16 }}>
+        {hitRate && (
+          <section className="life-card">
+            <h3>Plan hit rate · 30d</h3>
+            <div className="big">
+              {hitRate.shipped} / {hitRate.totalPlans} ·{' '}
+              <span className={
+                hitRate.rate >= 0.6 ? 'life-align-pill good'
+                : hitRate.rate >= 0.3 ? 'life-align-pill warn'
+                : 'life-align-pill bad'
+              }>
+                {Math.round(hitRate.rate * 100)}%
+              </span>
+            </div>
+            <div className="life-empty-inline">
+              Of {hitRate.totalPlans} committed plans in the last 30 days, {hitRate.shipped} shipped
+              (all tasks closed).
+            </div>
+          </section>
+        )}
+        {estTrend && estTrend.sample > 0 && (
+          <section className="life-card">
+            <h3>Estimation · 30d</h3>
+            <div className="big">×{estTrend.multiplier.toFixed(2)}</div>
+            <div className="life-empty-inline">
+              Across {estTrend.sample} tasks, your actuals are{' '}
+              {estTrend.multiplier > 1.1 ? 'running over' : estTrend.multiplier < 0.9 ? 'under' : 'calibrated'}{' '}
+              estimates. Plan gates auto-inflate new estimates by this factor.
+            </div>
+          </section>
+        )}
+        {drops.length > 0 && (
+          <section className="life-card col-span-2">
+            <h3>Drops by reason · 30d</h3>
+            <ul className="dash-list">
+              {drops.map((d) => (
+                <li key={d.keyword}>
+                  <span>{d.keyword || '(unspecified)'}</span>
+                  <span className="when">×{d.count}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+
+      <div className="life-card" style={{ marginBottom: 16 }}>
+        <h3>Monthly retro</h3>
+        {!retro ? (
+          <>
+            <p className="life-empty-inline">
+              Agent reads drops, estimates, and journals to extract 1-3 lessons into long-term memory.
+              Run once a month.
+            </p>
+            <div>
+              <button className="life-btn primary" onClick={handleRetro} disabled={runningRetro}>
+                {runningRetro ? 'Thinking…' : 'Run retro'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="big">{retro.narrative}</p>
+            {retro.lessons.length > 0 && (
+              <ul style={{ paddingLeft: 18, marginTop: 8 }}>
+                {retro.lessons.map((l, i) => (
+                  <li key={i} style={{ fontSize: '0.88rem', lineHeight: 1.55 }}>{l}</li>
+                ))}
+              </ul>
+            )}
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted, #888)', marginTop: 8 }}>
+              Lessons saved to long-term memory.
+            </div>
+          </>
+        )}
+      </div>
+
 
       <div className="life-stat-grid">
         <div className="life-stat">

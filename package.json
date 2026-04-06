@@ -18,6 +18,7 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "life:db:push": "prisma db push --config prisma.life.config.ts",
+    "life:db:force:push": "prisma db push --config prisma.life.config.ts --force-reset",
     "life:db:pull": "prisma db pull --config prisma.life.config.ts",
     "life:db:studio": "prisma studio --config prisma.life.config.ts",
     "life:db:generate": "prisma generate --config prisma.life.config.ts",

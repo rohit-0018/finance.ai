@@ -2,27 +2,46 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
 import { useLifeStore } from './store'
-import { ensureLifeUser, listTasksForDate, updateLifeUser, getStreak } from './lib/db'
+import {
+  ensureLifeUser,
+  listTasksForDate,
+  updateLifeUser,
+  getStreak,
+  ensureDefaultWorkspaces,
+  listValues,
+  listHorizons,
+} from './lib/db'
 import { isLifeDbConfigured } from './lib/supabaseLife'
 import { isAfterEod, todayLocal } from './lib/time'
+import { getAlignmentScore, type AlignmentSnapshot } from './lib/alignment'
 import {
   browserNotificationsGranted,
   requestBrowserNotifications,
   startReminderScheduler,
 } from './lib/notifier'
+import { startAutomationEngine } from './lib/automationEngine'
+import { maybeInjectFiveYearTask } from './lib/fiveYearInjection'
+import { getActiveMode } from './lib/modes'
+import ModeSwitcher from './components/ModeSwitcher'
 import type { LifeTask } from './types'
 import AgentDock from './components/AgentDock'
 import NotificationBell from './components/NotificationBell'
 import EodModal from './components/EodModal'
+import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 
 const NAV: Array<{ path: string; label: string; icon: React.ReactNode }> = [
   { path: '/life', label: 'Today', icon: <Icon kind="sun" /> },
+  { path: '/life/work', label: 'Work', icon: <Icon kind="briefcase" /> },
+  { path: '/life/personal', label: 'Personal', icon: <Icon kind="heart" /> },
+  { path: '/life/learnings', label: 'Learnings', icon: <Icon kind="bulb" /> },
+  { path: '/life/memory', label: 'Memory', icon: <Icon kind="brain" /> },
   { path: '/life/schedule', label: 'Schedule', icon: <Icon kind="clock" /> },
   { path: '/life/projects', label: 'Projects', icon: <Icon kind="layers" /> },
   { path: '/life/goals', label: 'Goals', icon: <Icon kind="target" /> },
   { path: '/life/learn', label: 'Learn', icon: <Icon kind="book" /> },
   { path: '/life/journal', label: 'Journal', icon: <Icon kind="edit" /> },
   { path: '/life/review', label: 'Review', icon: <Icon kind="trend" /> },
+  { path: '/life/integrations', label: 'Integrations', icon: <Icon kind="link" /> },
 ]
 
 function Icon({ kind }: { kind: string }) {
@@ -44,6 +63,16 @@ function Icon({ kind }: { kind: string }) {
       return (<svg {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18" /><polyline points="17 6 23 6 23 12" /></svg>)
     case 'sparkles':
       return (<svg {...p}><path d="M12 2l2 6 6 2-6 2-2 6-2-6-6-2 6-2z" /></svg>)
+    case 'link':
+      return (<svg {...p}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>)
+    case 'briefcase':
+      return (<svg {...p}><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" /></svg>)
+    case 'heart':
+      return (<svg {...p}><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>)
+    case 'bulb':
+      return (<svg {...p}><path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2a7 7 0 0 0-4 12.73V17h8v-2.27A7 7 0 0 0 12 2z" /></svg>)
+    case 'brain':
+      return (<svg {...p}><path d="M9 3a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3v0a3 3 0 0 0 3 3v0a3 3 0 0 0 3 3v2a3 3 0 0 0 6 0v-2a3 3 0 0 0 3-3v0a3 3 0 0 0 3-3v0a3 3 0 0 0-3-3V6a3 3 0 0 0-6 0" /></svg>)
     default:
       return null
   }
@@ -60,11 +89,19 @@ const LifeLayout: React.FC<LifeLayoutProps> = ({ title, children }) => {
   const currentUser = useAppStore((s) => s.currentUser)
   const lifeUser = useLifeStore((s) => s.lifeUser)
   const setLifeUser = useLifeStore((s) => s.setLifeUser)
+  const setWorkspaces = useLifeStore((s) => s.setWorkspaces)
+  const setActiveWorkspace = useLifeStore((s) => s.setActiveWorkspace)
+  const setValuesStore = useLifeStore((s) => s.setValues)
+  const setHorizonsStore = useLifeStore((s) => s.setHorizons)
+  const activeWorkspace = useLifeStore((s) => s.activeWorkspace)
+  const mode = useLifeStore((s) => s.mode)
+  const setModeStore = useLifeStore((s) => s.setMode)
   const toggleAgent = useLifeStore((s) => s.toggleAgent)
   const [eodOpen, setEodOpen] = useState(false)
   const [bootError, setBootError] = useState<string | null>(null)
   const [notifGranted, setNotifGranted] = useState(browserNotificationsGranted())
   const [streak, setStreak] = useState(0)
+  const [alignment, setAlignment] = useState<AlignmentSnapshot | null>(null)
   const todayTasksRef = useRef<LifeTask[]>([])
 
   // Sync papermind admin -> life_users on first /life mount
@@ -79,6 +116,41 @@ const LifeLayout: React.FC<LifeLayoutProps> = ({ title, children }) => {
       .then(setLifeUser)
       .catch((err) => setBootError((err as Error).message))
   }, [currentUser, lifeUser, setLifeUser])
+
+  // Phase 0: ensure the user has workspaces + preload values / horizons /
+  // active mode (Phase 10) so gates, automation, and brainstorm agents have
+  // the full context from first paint.
+  useEffect(() => {
+    if (!lifeUser) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const ws = await ensureDefaultWorkspaces(lifeUser.id)
+        if (cancelled) return
+        setWorkspaces(ws)
+        const active =
+          ws.find((w) => w.id === lifeUser.active_workspace_id) ??
+          ws.find((w) => w.kind === 'personal') ??
+          ws[0] ??
+          null
+        setActiveWorkspace(active)
+        const [values, horizons, mode] = await Promise.all([
+          listValues(lifeUser.id),
+          listHorizons(lifeUser.id),
+          getActiveMode(lifeUser.id),
+        ])
+        if (cancelled) return
+        setValuesStore(values)
+        setHorizonsStore(horizons)
+        setModeStore(mode)
+      } catch (err) {
+        if (!cancelled) setBootError((err as Error).message)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [lifeUser, setWorkspaces, setActiveWorkspace, setValuesStore, setHorizonsStore, setModeStore])
 
   // Auto-prompt EOD modal once after EOD hour, once per session
   useEffect(() => {
@@ -96,6 +168,37 @@ const LifeLayout: React.FC<LifeLayoutProps> = ({ title, children }) => {
     if (!lifeUser) return
     getStreak(lifeUser.id, todayLocal(lifeUser.timezone)).then(setStreak).catch(() => {})
   }, [lifeUser, eodOpen])
+
+  // Alignment score — trailing 7 days, re-compute on workspace switch
+  useEffect(() => {
+    if (!lifeUser) return
+    let cancelled = false
+    getAlignmentScore(lifeUser.id, activeWorkspace?.id ?? null)
+      .then((snap) => {
+        if (!cancelled) setAlignment(snap)
+      })
+      .catch(() => {/* non-fatal */})
+    return () => {
+      cancelled = true
+    }
+  }, [lifeUser, activeWorkspace?.id, eodOpen])
+
+  // Phase 7 automation engine — task reminders, escalation, drift, SLA
+  useEffect(() => {
+    if (!lifeUser) return
+    const workspaces = useLifeStore.getState().workspaces
+    if (workspaces.length === 0) return
+    const stop = startAutomationEngine({
+      user: lifeUser,
+      workspaces,
+      onNavigate: (path) => navigate(path),
+    })
+    // Phase 9: weekly 5-year default injection — once per ISO week, silently
+    // picks an active five-year horizon and schedules one tiny task.
+    const personal = workspaces.find((w) => w.kind === 'personal')
+    maybeInjectFiveYearTask(lifeUser, personal?.id ?? null).catch(() => {/* non-fatal */})
+    return stop
+  }, [lifeUser, navigate])
 
   // Browser notification scheduler
   useEffect(() => {
@@ -167,14 +270,22 @@ LIFE_DATABASE_URL=postgresql://...`}
     )
   }
 
+  const accent = activeWorkspace?.accent_color ?? '#6c63ff'
+  const workspaceKind = activeWorkspace?.kind ?? 'personal'
+
   return (
-    <div className="life-app">
+    <div
+      className={`life-app life-ws-${workspaceKind}`}
+      style={{ ['--ws-accent' as string]: accent }}
+    >
       <aside className="life-sidebar">
         <div className="life-sidebar-header">
           <span className="dot" />
           <span>Life</span>
           <button className="back" onClick={() => navigate('/')}>← back</button>
         </div>
+
+        <WorkspaceSwitcher />
 
         <nav className="life-nav">
           {NAV.map((item) => {
@@ -209,19 +320,26 @@ LIFE_DATABASE_URL=postgresql://...`}
       <main className="life-main">
         <header className="life-topbar">
           <h1>{title}</h1>
-          {streak > 0 && (
+          {streak > 0 && mode?.streak !== 'paused' && (
+            <span className="life-streak-pill" title="Consecutive days with closed journal">
+              {streak}d
+            </span>
+          )}
+          {mode?.streak === 'paused' && (
             <span
-              title="Consecutive days with closed journal"
-              style={{
-                fontSize: '0.74rem',
-                fontWeight: 600,
-                padding: '4px 10px',
-                background: 'linear-gradient(135deg, #f59e0b, #ef4444)',
-                color: 'white',
-                borderRadius: 999,
-              }}
+              className="life-streak-pill paused"
+              title="Streak paused while in Recovery mode"
             >
-              🔥 {streak}d
+              paused
+            </span>
+          )}
+          <ModeSwitcher />
+          {alignment && alignment.sample > 0 && (
+            <span
+              className={`life-align-pill ${alignment.rating}`}
+              title={`${alignment.sample} tasks in last ${alignment.windowDays}d traced to a quarterly goal`}
+            >
+              aligned {Math.round(alignment.rate * 100)}%
             </span>
           )}
           <div className="spacer" />

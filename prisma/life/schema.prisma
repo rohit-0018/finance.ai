@@ -4,8 +4,15 @@
 //
 // Conventions:
 //  - All rows are scoped by user_id (life_users.id), enforced in app code.
+//  - Rows that belong to a specific "life" (work/personal) are also scoped by workspace_id.
 //  - Timestamps use timestamptz; the app interprets them in user.timezone (default Asia/Kolkata).
 //  - "Today" / "EOD" semantics live in src/life/lib/time.ts, not in the DB.
+//
+// Phase 0 adds:
+//  - life_workspaces (work / personal) and scopes goals/projects/tasks/notifications/etc
+//  - timestamp + automation columns on life_tasks
+//  - brainstorm / plan / memory / integrations / values / horizons
+//  - discipline-loop tables: waiting_on, learnings (SRS), stakes, drops, estimates, capacity
 
 generator client {
   provider = "prisma-client"
@@ -25,11 +32,15 @@ model life_users {
   username            String                @unique
   display_name        String?
   timezone            String                @default("Asia/Kolkata")
-  eod_hour            Int                   @default(23) // 11 PM local time
-  work_start_hour     Int                   @default(11) // 11 AM IST default
-  work_end_hour       Int                   @default(20) // 8 PM IST default
-  notify_browser      Boolean               @default(false) // user opted into browser notifications
+  eod_hour            Int                   @default(23)
+  work_start_hour     Int                   @default(11)
+  work_end_hour       Int                   @default(20)
+  notify_browser      Boolean               @default(false)
+  // Which workspace the user was last looking at. Null until the user picks one.
+  active_workspace_id String?               @db.Uuid
   created_at          DateTime              @default(now()) @db.Timestamptz()
+
+  workspaces          life_workspaces[]
   goals               life_goals[]
   projects            life_projects[]
   tasks               life_tasks[]
@@ -39,100 +50,191 @@ model life_users {
   notifications       life_notifications[]
   time_blocks         life_time_blocks[]
   learn_items         life_learn_items[]
+  brainstorms         life_brainstorms[]
+  plans               life_plans[]
+  values              life_values[]
+  horizons            life_horizons[]
+  waiting_on          life_waiting_on[]
+  learnings           life_learnings[]
+  stakes              life_stakes[]
+  drops               life_drops[]
+  estimates           life_estimates[]
+  capacity            life_capacity[]
+  memory              life_memory[]
+  integrations        life_integrations[]
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Workspaces — one per "life" (work / personal). A user has exactly two by default.
+// kind is the machine handle; name/accent are for UI; settings hold per-workspace
+// knobs like notification intensity, quiet hours, agent tone, etc.
+// ──────────────────────────────────────────────────────────────────────────────
+model life_workspaces {
+  id              String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id         String                @db.Uuid
+  kind            String                // "work" | "personal" (future: "side", ...)
+  name            String
+  accent_color    String                @default("#6c63ff")
+  settings        Json                  @default("{}")
+  created_at      DateTime              @default(now()) @db.Timestamptz()
+  updated_at      DateTime              @default(now()) @updatedAt @db.Timestamptz()
+
+  user            life_users            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  goals           life_goals[]
+  projects        life_projects[]
+  tasks           life_tasks[]
+  notifications   life_notifications[]
+  agent_messages  life_agent_messages[]
+  time_blocks     life_time_blocks[]
+  brainstorms     life_brainstorms[]
+  waiting_on      life_waiting_on[]
+  learnings       life_learnings[]
+  memory          life_memory[]
+
+  @@unique([user_id, kind])
+  @@index([user_id])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Goals — long-lived intentions; each goal owns a tree of projects/tasks
 // ──────────────────────────────────────────────────────────────────────────────
 model life_goals {
-  id          String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id     String          @db.Uuid
-  title       String
-  why         String?
-  category    String          @default("personal") // office | personal | health | learn
-  horizon     String          @default("quarter")  // quarter | year | life
-  status      String          @default("active")   // active | paused | done | dropped
-  target_date DateTime?       @db.Timestamptz()
-  created_at  DateTime        @default(now()) @db.Timestamptz()
-  updated_at  DateTime        @default(now()) @updatedAt @db.Timestamptz()
-  user        life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  projects    life_projects[]
-  tasks       life_tasks[]
+  id           String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String          @db.Uuid
+  workspace_id String          @db.Uuid
+  title        String
+  why          String?
+  category     String          @default("personal")
+  horizon      String          @default("quarter")
+  status       String          @default("active")
+  target_date  DateTime?       @db.Timestamptz()
+  // Optional link into the horizon tree (quarter goal -> yearly -> 5yr)
+  horizon_id   String?         @db.Uuid
+  created_at   DateTime        @default(now()) @db.Timestamptz()
+  updated_at   DateTime        @default(now()) @updatedAt @db.Timestamptz()
+
+  user         life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace    life_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  horizon_ref  life_horizons?  @relation(fields: [horizon_id], references: [id], onDelete: SetNull)
+  projects     life_projects[]
+  tasks        life_tasks[]
 
   @@index([user_id, status])
+  @@index([workspace_id, status])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Projects — concrete bodies of work (office initiative or personal project)
+// Projects — concrete bodies of work (work initiative or personal project)
 // ──────────────────────────────────────────────────────────────────────────────
 model life_projects {
-  id            String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id       String                @db.Uuid
-  goal_id       String?               @db.Uuid
-  name          String
-  description   String?
-  category      String                @default("personal") // office | personal | health | learn
-  status        String                @default("active")   // active | paused | done | dropped
-  health        String                @default("green")    // green | yellow | red
-  // Free-form context the agent uses: links, stakeholders, definition of done, notes
-  context       Json                  @default("{}")
-  created_at    DateTime              @default(now()) @db.Timestamptz()
-  updated_at    DateTime              @default(now()) @updatedAt @db.Timestamptz()
-  user          life_users            @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  goal          life_goals?           @relation(fields: [goal_id], references: [id], onDelete: SetNull)
-  tasks         life_tasks[]
-  pulses        life_project_pulse[]
-  agent_threads life_agent_messages[]
+  id                  String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id             String                @db.Uuid
+  workspace_id        String                @db.Uuid
+  goal_id             String?               @db.Uuid
+  name                String
+  description         String?
+  category            String                @default("personal")
+  status              String                @default("active")
+  health              String                @default("green")
+  // Free-form context the agent uses: links, stakeholders, DoD, notes
+  context             Json                  @default("{}")
+  // Hard rule from Phase 2: every project has a definition of done.
+  definition_of_done  String?
+  // Discipline: cannot be deleted, only dropped with reason. Enforced in app code.
+  contract_mode       Boolean               @default(false)
+  // Cached from the brainstorm that produced this project (nullable for legacy).
+  brainstorm_id       String?               @db.Uuid
+  created_at          DateTime              @default(now()) @db.Timestamptz()
+  updated_at          DateTime              @default(now()) @updatedAt @db.Timestamptz()
+
+  user                life_users            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace           life_workspaces       @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  goal                life_goals?           @relation(fields: [goal_id], references: [id], onDelete: SetNull)
+  brainstorm          life_brainstorms?     @relation("ProjectBrainstorm", fields: [brainstorm_id], references: [id], onDelete: SetNull)
+  tasks               life_tasks[]
+  pulses              life_project_pulse[]
+  agent_threads       life_agent_messages[]
+  plans               life_plans[]
 
   @@index([user_id, status])
+  @@index([workspace_id, status])
   @@index([user_id, category])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Tasks — the daily unit of work; tagged to a date via scheduled_for
+// Tasks — the daily unit of work
+// Phase 0: real timestamps (start_at, due_at), dependencies, automation jsonb,
+// implementation intentions (when_where), and origin_message_id for traceability.
 // ──────────────────────────────────────────────────────────────────────────────
 model life_tasks {
-  id            String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id       String         @db.Uuid
-  project_id    String?        @db.Uuid
-  goal_id       String?        @db.Uuid
-  title         String
-  notes         String?
-  // Local-date string (YYYY-MM-DD) in the user's timezone — avoids tz drift on "today" queries.
-  scheduled_for String?
-  due_at        DateTime?      @db.Timestamptz()
-  estimate_min  Int?
-  status        String         @default("todo") // todo | doing | done | dropped
-  priority      Int            @default(3)      // 1 (highest) .. 5
-  tags          Json           @default("[]")
-  source        String         @default("manual") // manual | agent | quickadd
-  created_at    DateTime       @default(now()) @db.Timestamptz()
-  updated_at    DateTime       @default(now()) @updatedAt @db.Timestamptz()
-  done_at       DateTime?      @db.Timestamptz()
-  user          life_users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  project       life_projects? @relation(fields: [project_id], references: [id], onDelete: SetNull)
-  goal          life_goals?    @relation(fields: [goal_id], references: [id], onDelete: SetNull)
+  id                 String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id            String         @db.Uuid
+  workspace_id       String         @db.Uuid
+  project_id         String?        @db.Uuid
+  goal_id            String?        @db.Uuid
+  title              String
+  notes              String?
+  // Legacy local-date string. Kept for backward compat + fast "today" filters.
+  scheduled_for      String?
+  // New: real timestamps
+  start_at           DateTime?      @db.Timestamptz()
+  due_at             DateTime?      @db.Timestamptz()
+  estimate_min       Int?
+  actual_min         Int?           // filled on done for calibration
+  status             String         @default("todo")
+  priority           Int            @default(3)
+  tags               Json           @default("[]")
+  source             String         @default("manual")
+  // Discipline fields
+  when_where         String?        // "tomorrow 7:15am, at desk, after coffee"
+  first_action       String?        // smallest physical first step
+  hard_start         Boolean        @default(false) // enforce the when_where strictly
+  // Dependencies: ids of tasks that must complete before this one is ready.
+  depends_on         String[]       @default([]) @db.Uuid
+  // Automation config: reminders, escalation, check-ins. See src/life/types.ts.
+  automation         Json           @default("{}")
+  // Traceability
+  origin_message_id  String?        @db.Uuid
+  plan_id            String?        @db.Uuid
+  // Google Calendar link (filled in Phase 3)
+  google_event_id    String?
+  created_at         DateTime       @default(now()) @db.Timestamptz()
+  updated_at         DateTime       @default(now()) @updatedAt @db.Timestamptz()
+  done_at            DateTime?      @db.Timestamptz()
+
+  user               life_users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace          life_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  project            life_projects? @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  goal               life_goals?    @relation(fields: [goal_id], references: [id], onDelete: SetNull)
+  plan               life_plans?    @relation(fields: [plan_id], references: [id], onDelete: SetNull)
+  waiting_on         life_waiting_on[]
+  stakes             life_stakes[]
+  estimates          life_estimates[]
 
   @@index([user_id, scheduled_for])
   @@index([user_id, status])
+  @@index([workspace_id, status])
   @@index([project_id])
+  @@index([user_id, start_at])
+  @@index([user_id, due_at])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Journal — one row per (user, local date). End-of-day reflection.
+// Journal — one row per (user, local date)
 // ──────────────────────────────────────────────────────────────────────────────
 model life_journal {
   id         String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   user_id    String     @db.Uuid
-  date       String     // YYYY-MM-DD in user's timezone
-  summary    String?    // markdown
+  date       String
+  summary    String?
   wins       String?
   blockers   String?
   tomorrow   String?
-  energy     Int?       // 1..5
-  closed_at  DateTime?  @db.Timestamptz() // when user clicked "close the day"
+  energy     Int?
+  closed_at  DateTime?  @db.Timestamptz()
   created_at DateTime   @default(now()) @db.Timestamptz()
   updated_at DateTime   @default(now()) @updatedAt @db.Timestamptz()
+
   user       life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, date])
@@ -146,15 +248,16 @@ model life_project_pulse {
   id              String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   user_id         String        @db.Uuid
   project_id      String        @db.Uuid
-  last_progress   String?       // what moved since last pulse
-  next_step       String?       // single most important next action
-  whats_missing   String?       // gaps the agent flagged
-  risk            String?       // why it might stall
-  suggested_tasks Json          @default("[]") // [{title, estimate_min, priority}]
-  health          String        @default("green") // green | yellow | red
-  generated_by    String        @default("agent") // agent | user
-  raw             Json?         // full agent output for debugging
+  last_progress   String?
+  next_step       String?
+  whats_missing   String?
+  risk            String?
+  suggested_tasks Json          @default("[]")
+  health          String        @default("green")
+  generated_by    String        @default("agent")
+  raw             Json?
   created_at      DateTime      @default(now()) @db.Timestamptz()
+
   user            life_users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
   project         life_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
@@ -163,49 +266,56 @@ model life_project_pulse {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Agent chat — persistent thread per (user, optional project scope)
+// Agent chat — persistent thread per (user, workspace, optional project/brainstorm)
 // ──────────────────────────────────────────────────────────────────────────────
 model life_agent_messages {
-  id         String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id    String         @db.Uuid
-  project_id String?        @db.Uuid // null = global Life thread
-  role       String         // user | assistant | system
-  content    String
-  // Tool calls / structured payloads (e.g. created task ids) for replay
-  meta       Json?
-  created_at DateTime       @default(now()) @db.Timestamptz()
-  user       life_users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  project    life_projects? @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  id             String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id        String            @db.Uuid
+  workspace_id   String            @db.Uuid
+  project_id     String?           @db.Uuid
+  brainstorm_id  String?           @db.Uuid
+  role           String
+  content        String
+  meta           Json?
+  created_at     DateTime          @default(now()) @db.Timestamptz()
+
+  user           life_users        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace      life_workspaces   @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  project        life_projects?    @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  brainstorm     life_brainstorms? @relation(fields: [brainstorm_id], references: [id], onDelete: Cascade)
 
   @@index([user_id, project_id, created_at])
+  @@index([workspace_id, created_at])
+  @@index([brainstorm_id, created_at])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Time blocks — schedule entries on a calendar day
-// start_minute / end_minute = minutes since local midnight (0..1439)
-// kind: office | deep | learn | admin | break
 // ──────────────────────────────────────────────────────────────────────────────
 model life_time_blocks {
-  id           String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id      String     @db.Uuid
-  date         String     // YYYY-MM-DD
-  start_minute Int
-  end_minute   Int
-  label        String
-  kind         String     @default("deep")
-  task_id      String?    @db.Uuid
-  source       String     @default("manual") // manual | agent
-  created_at   DateTime   @default(now()) @db.Timestamptz()
-  user         life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String          @db.Uuid
+  workspace_id  String          @db.Uuid
+  date          String
+  start_minute  Int
+  end_minute    Int
+  label         String
+  kind          String          @default("deep")
+  task_id       String?         @db.Uuid
+  source        String          @default("manual")
+  // Google calendar link (Phase 3)
+  google_event_id String?
+  created_at    DateTime        @default(now()) @db.Timestamptz()
+
+  user          life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace     life_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
 
   @@index([user_id, date])
+  @@index([workspace_id, date])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Learn items — reading queue + completed knowledge
-// source_type: manual | papermind_paper | papermind_article | url
-// status: queue | reading | done | dropped
-// papermind_id stores cross-database UUID (no FK because separate DB)
+// Learn items — reading queue (legacy — will be fed by life_learnings in Phase 5)
 // ──────────────────────────────────────────────────────────────────────────────
 model life_learn_items {
   id            String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
@@ -219,6 +329,7 @@ model life_learn_items {
   status        String     @default("queue")
   added_at      DateTime   @default(now()) @db.Timestamptz()
   completed_at  DateTime?  @db.Timestamptz()
+
   user          life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id, status])
@@ -226,18 +337,272 @@ model life_learn_items {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// In-app notifications — bell icon feed
+// In-app notifications
 // ──────────────────────────────────────────────────────────────────────────────
 model life_notifications {
-  id         String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id    String     @db.Uuid
-  kind       String     // task_due | eod_reminder | pulse_ready | project_at_risk | agent_message
-  title      String
-  body       String?
-  link       String?    // in-app route, e.g. /life/projects/<id>
-  read       Boolean    @default(false)
-  created_at DateTime   @default(now()) @db.Timestamptz()
-  user       life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id           String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String          @db.Uuid
+  workspace_id String          @db.Uuid
+  kind         String
+  title        String
+  body         String?
+  link         String?
+  read         Boolean         @default(false)
+  created_at   DateTime        @default(now()) @db.Timestamptz()
+
+  user         life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace    life_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
 
   @@index([user_id, read, created_at])
+  @@index([workspace_id, read, created_at])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Brainstorms — a thread that turns talk into a committed plan.
+// A brainstorm is "open" while chatting, "committed" once a plan is accepted,
+// "abandoned" if the user walks away.
+// ──────────────────────────────────────────────────────────────────────────────
+model life_brainstorms {
+  id              String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id         String                @db.Uuid
+  workspace_id    String                @db.Uuid
+  title           String
+  // Scripted interview phase: goal | constraints | decomposition | schedule | review
+  phase           String                @default("goal")
+  status          String                @default("open") // open | committed | abandoned
+  summary         String?               // agent's rolling summary for context trim
+  context         Json                  @default("{}") // free-form notes (goal, constraints, risks)
+  project_id      String?               @db.Uuid // filled on commit
+  created_at      DateTime              @default(now()) @db.Timestamptz()
+  updated_at      DateTime              @default(now()) @updatedAt @db.Timestamptz()
+  committed_at    DateTime?             @db.Timestamptz()
+
+  user            life_users            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace       life_workspaces       @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  messages        life_agent_messages[]
+  plans           life_plans[]
+  project         life_projects[]       @relation("ProjectBrainstorm")
+
+  @@index([user_id, status])
+  @@index([workspace_id, status])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Plans — versioned snapshot of a committed plan (editable draft → final).
+// Once "committed", tasks are materialized and point back via plan_id.
+// ──────────────────────────────────────────────────────────────────────────────
+model life_plans {
+  id             String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id        String            @db.Uuid
+  brainstorm_id  String            @db.Uuid
+  project_id     String?           @db.Uuid
+  version        Int               @default(1)
+  status         String            @default("draft") // draft | committed | superseded
+  // The plan itself: { milestones: [...], tasks: [...], risks: [...], pre_mortem: {...} }
+  snapshot       Json              @default("{}")
+  created_at     DateTime          @default(now()) @db.Timestamptz()
+  committed_at   DateTime?         @db.Timestamptz()
+
+  user           life_users        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  brainstorm     life_brainstorms  @relation(fields: [brainstorm_id], references: [id], onDelete: Cascade)
+  project        life_projects?    @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  tasks          life_tasks[]
+
+  @@index([brainstorm_id, version])
+  @@index([user_id, status])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Long-horizon: values, 5yr/yearly/quarterly cascade
+// ──────────────────────────────────────────────────────────────────────────────
+model life_values {
+  id         String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id    String     @db.Uuid
+  title      String     // "family" | "craft" | "health" ...
+  description String?
+  weight     Int        @default(1) // relative importance for alignment scoring
+  created_at DateTime   @default(now()) @db.Timestamptz()
+  updated_at DateTime   @default(now()) @updatedAt @db.Timestamptz()
+
+  user       life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model life_horizons {
+  id           String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String         @db.Uuid
+  // "five_year" (regret list) | "year" | "quarter"
+  kind         String
+  title        String
+  why          String?
+  target_date  DateTime?      @db.Timestamptz()
+  parent_id    String?        @db.Uuid // quarter -> year -> five_year
+  status       String         @default("active") // active | done | dropped
+  created_at   DateTime       @default(now()) @db.Timestamptz()
+  updated_at   DateTime       @default(now()) @updatedAt @db.Timestamptz()
+
+  user         life_users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  parent       life_horizons? @relation("HorizonTree", fields: [parent_id], references: [id], onDelete: SetNull)
+  children     life_horizons[] @relation("HorizonTree")
+  goals        life_goals[]
+
+  @@index([user_id, kind, status])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Discipline loop tables
+// ──────────────────────────────────────────────────────────────────────────────
+model life_waiting_on {
+  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String          @db.Uuid
+  workspace_id  String          @db.Uuid
+  task_id       String?         @db.Uuid
+  title         String
+  who           String          // "Priya" | "legal" | "stripe support"
+  asked_at      DateTime        @default(now()) @db.Timestamptz()
+  sla_days      Int             @default(2)
+  follow_up_at  DateTime        @db.Timestamptz()
+  status        String          @default("waiting") // waiting | received | gave_up
+  notes         String?
+  created_at    DateTime        @default(now()) @db.Timestamptz()
+  updated_at    DateTime        @default(now()) @updatedAt @db.Timestamptz()
+
+  user          life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace     life_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  task          life_tasks?     @relation(fields: [task_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id, status, follow_up_at])
+  @@index([workspace_id, status])
+}
+
+// Spaced-repetition "one idea per thing I read/watch/learned"
+model life_learnings {
+  id             String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id        String          @db.Uuid
+  workspace_id   String          @db.Uuid
+  content        String          // the one-sentence idea
+  source_url     String?
+  source_type    String          @default("manual") // manual | papermind | meeting | book | video
+  source_ref     String?         // papermind id, meeting id, etc
+  // SM-2-lite: interval grows, next_review_at advances
+  interval_days  Int             @default(3)
+  next_review_at DateTime        @db.Timestamptz()
+  review_count   Int             @default(0)
+  ease           Float           @default(2.5)
+  archived       Boolean         @default(false)
+  // "curiosity" after 7d without conversion becomes archived automatically
+  action_deadline DateTime?      @db.Timestamptz()
+  became_task_id String?         @db.Uuid
+  created_at     DateTime        @default(now()) @db.Timestamptz()
+  updated_at     DateTime        @default(now()) @updatedAt @db.Timestamptz()
+
+  user           life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace      life_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, archived, next_review_at])
+  @@index([workspace_id, archived])
+}
+
+model life_stakes {
+  id           String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String     @db.Uuid
+  task_id      String?    @db.Uuid
+  project_id   String?    @db.Uuid
+  kind         String     // money | social | forfeit
+  amount_cents Int?       // for money stakes
+  description  String     // "Donate $20 to X if I miss this"
+  partner      String?    // accountability partner, email or name
+  status       String     @default("pending") // pending | honored | paid | waived
+  created_at   DateTime   @default(now()) @db.Timestamptz()
+  resolved_at  DateTime?  @db.Timestamptz()
+
+  user         life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  task         life_tasks? @relation(fields: [task_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id, status])
+}
+
+// Drop-with-reason log — feeds monthly retro + repeat-bail detection.
+// ref_id is a soft pointer (task or project) — intentionally no FK because the
+// dropped row may be deleted or kind may switch. Join in app code.
+model life_drops {
+  id           String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String     @db.Uuid
+  kind         String     // task | project
+  ref_id       String     @db.Uuid
+  title        String     // snapshot at drop time
+  reason       String
+  created_at   DateTime   @default(now()) @db.Timestamptz()
+
+  user         life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, kind, created_at])
+}
+
+// Estimation calibration history
+model life_estimates {
+  id            String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String     @db.Uuid
+  task_id       String     @db.Uuid
+  estimated_min Int
+  actual_min    Int
+  created_at    DateTime   @default(now()) @db.Timestamptz()
+
+  user          life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  task          life_tasks @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, created_at])
+}
+
+// Per-day capacity ceiling so plan commit can enforce "no over-committing"
+model life_capacity {
+  id           String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String     @db.Uuid
+  date         String     // YYYY-MM-DD local
+  ceiling_min  Int        // computed from calendar free time
+  committed_min Int       @default(0) // sum of estimate_min of tasks scheduled that day
+  updated_at   DateTime   @default(now()) @updatedAt @db.Timestamptz()
+
+  user         life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, date])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Cross-agent memory + external integrations
+// ──────────────────────────────────────────────────────────────────────────────
+model life_memory {
+  id           String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String          @db.Uuid
+  workspace_id String?         @db.Uuid // null = shared across both workspaces
+  key          String          // "manager" | "weekly_standup" | "partner_name"
+  value        String
+  source       String          @default("user") // agent | user
+  confidence   Float           @default(1.0)
+  created_at   DateTime        @default(now()) @db.Timestamptz()
+  updated_at   DateTime        @default(now()) @updatedAt @db.Timestamptz()
+
+  user         life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace    life_workspaces? @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, workspace_id, key])
+  @@index([user_id])
+}
+
+model life_integrations {
+  id            String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String     @db.Uuid
+  provider      String     // google_calendar | github | linear | slack | notion
+  access_token  String
+  refresh_token String?
+  scope         String?
+  expires_at    DateTime?  @db.Timestamptz()
+  meta          Json       @default("{}")
+  created_at    DateTime   @default(now()) @db.Timestamptz()
+  updated_at    DateTime   @default(now()) @updatedAt @db.Timestamptz()
+
+  user          life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, provider])
 }

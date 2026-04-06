@@ -15,8 +15,10 @@ import {
   createTask,
 } from '../lib/db'
 import { generatePulse } from '../lib/agent'
-import type { LifeProject, LifeTask, LifeProjectPulse } from '../types'
+import type { LifeProject, LifeTask, LifeProjectPulse, LifeStake } from '../types'
 import { localTime } from '../lib/time'
+import DropModal from '../components/DropModal'
+import { listStakes, createStake, resolveStake } from '../lib/db'
 
 const ProjectDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -28,18 +30,27 @@ const ProjectDetailPage: React.FC = () => {
   const [project, setProject] = useState<LifeProject | null>(null)
   const [tasks, setTasks] = useState<LifeTask[]>([])
   const [pulses, setPulses] = useState<LifeProjectPulse[]>([])
+  const [stakes, setStakes] = useState<LifeStake[]>([])
   const [generating, setGenerating] = useState(false)
+  const [dropping, setDropping] = useState(false)
+  const [dropTarget, setDropTarget] = useState<{ kind: 'task' | 'project'; id: string; title: string } | null>(null)
+  const [showStakeForm, setShowStakeForm] = useState(false)
+  const [stakeDesc, setStakeDesc] = useState('')
+  const [stakeKind, setStakeKind] = useState<'money' | 'social' | 'forfeit'>('money')
+  const [stakeAmount, setStakeAmount] = useState<number>(20)
 
   const load = useCallback(async () => {
     if (!lifeUser || !id) return
-    const [p, t, pl] = await Promise.all([
+    const [p, t, pl, st] = await Promise.all([
       getProject(lifeUser.id, id),
       listTasksForProject(lifeUser.id, id),
       listPulses(lifeUser.id, id),
+      listStakes(lifeUser.id),
     ])
     setProject(p)
     setTasks(t)
     setPulses(pl)
+    setStakes(st.filter((s) => s.project_id === id))
   }, [lifeUser, id])
 
   useEffect(() => {
@@ -141,6 +152,15 @@ const ProjectDetailPage: React.FC = () => {
         <button className="life-btn" onClick={() => { setAgentProject(project); setAgentOpen(true) }}>
           Open copilot
         </button>
+        {project.status === 'active' && (
+          <button
+            className="life-btn"
+            onClick={() => setDropTarget({ kind: 'project', id: project.id, title: project.name })}
+            title={project.contract_mode ? 'Contract mode — drop with reason required' : 'Drop project'}
+          >
+            Drop
+          </button>
+        )}
       </div>
 
       {project.description && (
@@ -209,6 +229,133 @@ const ProjectDetailPage: React.FC = () => {
           })
         )}
       </div>
+
+      {/* Stakes */}
+      <div className="life-section">
+        <h2>Stakes</h2>
+        {stakes.length === 0 && !showStakeForm && (
+          <div className="life-empty">
+            <p>No stakes on this project. Want to put something real on the line?</p>
+            <button className="life-btn" onClick={() => setShowStakeForm(true)}>
+              + Attach a stake
+            </button>
+          </div>
+        )}
+        {stakes.map((s) => (
+          <div key={s.id} className="life-card" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className={`life-pill ${s.status}`}>{s.status}</span>
+            <span style={{ flex: 1 }}>{s.description}</span>
+            {s.amount_cents && <span>${(s.amount_cents / 100).toFixed(0)}</span>}
+            {s.status === 'pending' && lifeUser && (
+              <>
+                <button
+                  className="life-btn"
+                  onClick={async () => {
+                    await resolveStake(lifeUser.id, s.id, 'honored')
+                    load()
+                  }}
+                >
+                  Honored
+                </button>
+                <button
+                  className="life-btn"
+                  onClick={async () => {
+                    await resolveStake(lifeUser.id, s.id, 'paid')
+                    load()
+                  }}
+                >
+                  Paid
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+        {showStakeForm && (
+          <div className="life-card">
+            <h3>Attach stake</h3>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <select
+                value={stakeKind}
+                onChange={(e) => setStakeKind(e.target.value as 'money' | 'social' | 'forfeit')}
+                className="life-select"
+              >
+                <option value="money">money</option>
+                <option value="social">social</option>
+                <option value="forfeit">forfeit</option>
+              </select>
+              {stakeKind === 'money' && (
+                <input
+                  type="number"
+                  value={stakeAmount}
+                  onChange={(e) => setStakeAmount(Number(e.target.value))}
+                  style={{
+                    width: 100,
+                    padding: 8,
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    background: 'var(--bg)',
+                    color: 'var(--text)',
+                  }}
+                />
+              )}
+            </div>
+            <input
+              value={stakeDesc}
+              onChange={(e) => setStakeDesc(e.target.value)}
+              placeholder="describe the stake (e.g. $20 to charity if missed)"
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: 10,
+                marginBottom: 8,
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                fontSize: '0.88rem',
+              }}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="life-btn primary"
+                onClick={async () => {
+                  if (!lifeUser || !project || !stakeDesc.trim()) return
+                  await createStake({
+                    userId: lifeUser.id,
+                    projectId: project.id,
+                    kind: stakeKind,
+                    amountCents: stakeKind === 'money' ? stakeAmount * 100 : undefined,
+                    description: stakeDesc.trim(),
+                  })
+                  setStakeDesc('')
+                  setShowStakeForm(false)
+                  load()
+                }}
+              >
+                Save stake
+              </button>
+              <button className="life-btn" onClick={() => setShowStakeForm(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {dropTarget && lifeUser && (
+        <DropModal
+          userId={lifeUser.id}
+          kind={dropTarget.kind as 'task' | 'project'}
+          refId={dropTarget.id}
+          title={dropTarget.title}
+          onClose={() => setDropTarget(null)}
+          onDropped={() => {
+            setDropping(false)
+            if (dropTarget.kind === 'project') navigate('/life/projects')
+            else load()
+          }}
+        />
+      )}
 
       {pulses.length > 1 && (
         <div className="life-section">
