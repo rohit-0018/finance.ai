@@ -15,6 +15,8 @@ const ArticlesPage = lazy(() => import('./pages/ArticlesPage'))
 const ArticleReaderPage = lazy(() => import('./pages/ArticleReaderPage'))
 const InterestsPage = lazy(() => import('./pages/InterestsPage'))
 const AdminPage = lazy(() => import('./pages/SettingsPage'))
+// Life app — admin-only, lazy-loaded internal module (separate Supabase DB)
+const LifeApp = lazy(() => import('./life/LifeApp'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,7 +32,7 @@ const PageLoader: React.FC = () => (
   <div className="loading-center">Loading...</div>
 )
 
-const AuthenticatedApp: React.FC = () => (
+const PaperMindRoutes: React.FC = () => (
   <Layout>
     <Suspense fallback={<PageLoader />}>
       <Routes>
@@ -47,6 +49,20 @@ const AuthenticatedApp: React.FC = () => (
     </Suspense>
   </Layout>
 )
+
+const AuthenticatedApp: React.FC = () => {
+  const isAdmin = useAppStore((s) => s.isAdmin)
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        {/* Life app — admin only, has its own internal layout (no main sidebar) */}
+        {isAdmin() && <Route path="/life/*" element={<LifeApp />} />}
+        {/* Everything else goes through the main papermind layout */}
+        <Route path="/*" element={<PaperMindRoutes />} />
+      </Routes>
+    </Suspense>
+  )
+}
 
 const UnauthenticatedApp: React.FC = () => (
   <Suspense fallback={<PageLoader />}>

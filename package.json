@@ -16,7 +16,13 @@
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "life:db:push": "prisma db push --config prisma.life.config.ts",
+    "life:db:pull": "prisma db pull --config prisma.life.config.ts",
+    "life:db:studio": "prisma studio --config prisma.life.config.ts",
+    "life:db:generate": "prisma generate --config prisma.life.config.ts",
+    "life:db:migrate": "prisma migrate dev --config prisma.life.config.ts",
+    "life:db:reset": "prisma migrate reset --config prisma.life.config.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

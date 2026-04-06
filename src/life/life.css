@@ -1,0 +1,728 @@
+/* Life app styles — scoped under .life-app so they don't bleed into papermind */
+
+.life-app {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+}
+
+/* ── Internal sidebar ─────────────────────────────────────────────── */
+
+.life-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg2, var(--bg));
+  display: flex;
+  flex-direction: column;
+  padding: 18px 14px;
+  gap: 14px;
+}
+
+.life-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: -0.02em;
+  padding: 4px 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.life-sidebar-header .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+}
+.life-sidebar-header .back {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  background: none; border: none;
+}
+.life-sidebar-header .back:hover { color: var(--accent); }
+
+.life-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.life-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.life-nav button:hover { background: var(--hover, rgba(0,0,0,0.04)); }
+.life-nav button.active {
+  background: var(--accent);
+  color: var(--bg);
+}
+.life-nav .icon { width: 16px; height: 16px; flex-shrink: 0; }
+
+.life-sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--text-muted, #888);
+}
+
+/* ── Main canvas ──────────────────────────────────────────────────── */
+
+.life-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.life-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.life-topbar h1 {
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.life-topbar .spacer { flex: 1; }
+.life-topbar .icon-btn {
+  width: 34px; height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s;
+}
+.life-topbar .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.life-topbar .icon-btn .badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.62rem;
+  font-weight: 700;
+  border-radius: 999px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.life-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 32px;
+}
+
+/* ── Quick add bar ────────────────────────────────────────────────── */
+
+.life-quickadd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 20px;
+}
+.life-quickadd input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 0.9rem;
+  outline: none;
+  font-family: inherit;
+}
+.life-quickadd input::placeholder { color: var(--text-muted, #999); }
+.life-quickadd kbd {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--border);
+  color: var(--text-muted);
+}
+
+/* ── Cards / lists ────────────────────────────────────────────────── */
+
+.life-section {
+  margin-bottom: 32px;
+}
+.life-section h2 {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, #888);
+  margin: 0 0 12px;
+}
+
+.life-card {
+  background: var(--bg2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 10px;
+  transition: border-color 0.15s;
+}
+.life-card:hover { border-color: var(--accent); }
+.life-card-title {
+  font-weight: 600;
+  font-size: 0.92rem;
+  margin: 0 0 4px;
+}
+.life-card-meta {
+  font-size: 0.74rem;
+  color: var(--text-muted, #888);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ── Task row ─────────────────────────────────────────────────────── */
+
+.life-task-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  background: var(--bg2, var(--bg));
+  cursor: pointer;
+}
+.life-task-row:hover { border-color: var(--accent); }
+.life-task-row .check {
+  width: 18px; height: 18px;
+  border: 1.5px solid var(--border2, var(--border));
+  border-radius: 5px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  background: var(--bg);
+  transition: all 0.15s;
+}
+.life-task-row .check:hover { border-color: var(--accent); }
+.life-task-row .check.done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.life-task-row .title {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+.life-task-row.done .title {
+  text-decoration: line-through;
+  color: var(--text-muted, #999);
+}
+.life-task-row .meta {
+  font-size: 0.72rem;
+  color: var(--text-muted, #888);
+  display: flex;
+  gap: 8px;
+}
+.life-task-row .pri-1 { color: #ef4444; font-weight: 600; }
+.life-task-row .pri-2 { color: #f59e0b; font-weight: 600; }
+
+/* ── Pills / tags ─────────────────────────────────────────────────── */
+
+.life-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text);
+  font-weight: 500;
+}
+.life-pill.office { background: #3b82f6; color: white; }
+.life-pill.personal { background: #8b5cf6; color: white; }
+.life-pill.health { background: #10b981; color: white; }
+.life-pill.learn { background: #f59e0b; color: white; }
+.life-pill.green { background: #10b981; color: white; }
+.life-pill.yellow { background: #f59e0b; color: white; }
+.life-pill.red { background: #ef4444; color: white; }
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+
+.life-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg2, var(--bg));
+  color: var(--text);
+  font-size: 0.83rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.life-btn:hover { border-color: var(--accent); color: var(--accent); }
+.life-btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.life-btn.primary:hover { opacity: 0.9; color: var(--bg); }
+.life-btn.danger { color: #ef4444; border-color: #ef4444; }
+
+/* ── Empty state ──────────────────────────────────────────────────── */
+
+.life-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted, #888);
+}
+.life-empty h3 { margin: 0 0 6px; font-size: 1rem; color: var(--text); }
+.life-empty p { margin: 0; font-size: 0.85rem; }
+
+/* ── Agent dock panel ─────────────────────────────────────────────── */
+
+.life-agent-dock {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 420px;
+  max-width: 90vw;
+  height: 100vh;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 32px rgba(0,0,0,0.18);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(.2,.8,.2,1);
+}
+.life-agent-dock.open { transform: translateX(0); }
+
+.life-agent-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.life-agent-header .avatar {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: 700; font-size: 0.85rem;
+}
+.life-agent-header .titles { flex: 1; min-width: 0; }
+.life-agent-header .name { font-weight: 650; font-size: 0.9rem; }
+.life-agent-header .scope {
+  font-size: 0.7rem; color: var(--text-muted, #888);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.life-agent-header .close {
+  width: 30px; height: 30px;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted);
+  border-radius: 6px;
+}
+.life-agent-header .close:hover { background: var(--hover, rgba(0,0,0,0.05)); color: var(--text); }
+
+.life-agent-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.life-agent-msg {
+  max-width: 90%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.life-agent-msg.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--bg);
+  border-bottom-right-radius: 4px;
+}
+.life-agent-msg.assistant {
+  align-self: flex-start;
+  background: var(--bg2, var(--border));
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+.life-agent-msg.thinking {
+  align-self: flex-start;
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.8rem;
+}
+
+.life-agent-input {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+  display: flex;
+  gap: 8px;
+}
+.life-agent-input textarea {
+  flex: 1;
+  resize: none;
+  background: var(--bg2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: inherit;
+  min-height: 42px;
+  max-height: 140px;
+  outline: none;
+}
+.life-agent-input textarea:focus { border-color: var(--accent); }
+.life-agent-input button {
+  padding: 0 16px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 0.83rem;
+  cursor: pointer;
+}
+.life-agent-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Notifications dropdown ───────────────────────────────────────── */
+
+.life-notif-dropdown {
+  position: absolute;
+  top: 44px;
+  right: 24px;
+  width: 340px;
+  max-height: 460px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.18);
+  z-index: 900;
+  overflow-y: auto;
+}
+.life-notif-dropdown header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font-size: 0.78rem; font-weight: 600;
+}
+.life-notif-dropdown header button {
+  background: none; border: none; color: var(--accent);
+  font-size: 0.72rem; cursor: pointer;
+}
+.life-notif-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.life-notif-item:hover { background: var(--hover, rgba(0,0,0,0.04)); }
+.life-notif-item.unread { background: var(--bg2, rgba(99,102,241,0.04)); }
+.life-notif-item .title { font-size: 0.84rem; font-weight: 600; margin-bottom: 2px; }
+.life-notif-item .body { font-size: 0.74rem; color: var(--text-muted, #888); }
+.life-notif-item .time { font-size: 0.66rem; color: var(--text-muted, #999); margin-top: 4px; }
+
+/* ── EOD modal ────────────────────────────────────────────────────── */
+
+.life-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1100;
+}
+.life-modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  width: 560px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 28px;
+}
+.life-modal h2 { margin: 0 0 4px; font-size: 1.15rem; }
+.life-modal .subtitle { color: var(--text-muted, #888); font-size: 0.83rem; margin-bottom: 20px; }
+.life-modal label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 14px 0 6px;
+  color: var(--text);
+}
+.life-modal textarea, .life-modal input {
+  width: 100%;
+  background: var(--bg2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.86rem;
+  outline: none;
+  box-sizing: border-box;
+}
+.life-modal textarea { min-height: 70px; resize: vertical; }
+.life-modal textarea:focus, .life-modal input:focus { border-color: var(--accent); }
+.life-modal-actions {
+  display: flex; gap: 10px; justify-content: flex-end;
+  margin-top: 22px;
+}
+
+.life-modal-energy {
+  display: flex; gap: 6px;
+}
+.life-modal-energy button {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 600;
+}
+.life-modal-energy button.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+/* ── Pulse box (project detail) ───────────────────────────────────── */
+
+.life-pulse {
+  background: linear-gradient(135deg, rgba(99,102,241,0.06), rgba(139,92,246,0.06));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 18px;
+}
+.life-pulse h3 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, #888);
+  margin: 0 0 12px;
+}
+.life-pulse-row { margin-bottom: 12px; }
+.life-pulse-row strong {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 3px;
+}
+.life-pulse-row p { margin: 0; font-size: 0.88rem; line-height: 1.5; }
+
+/* ── Schedule (day timeline) ──────────────────────────────────────── */
+
+.life-schedule {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg2, var(--bg));
+  position: relative;
+}
+.life-schedule-hours {
+  width: 60px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+}
+.life-schedule-hour {
+  height: 60px;
+  font-size: 0.7rem;
+  color: var(--text-muted, #888);
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.life-schedule-canvas {
+  position: relative;
+  flex: 1;
+  user-select: none;
+}
+.life-schedule-row {
+  height: 60px;
+  border-bottom: 1px solid var(--border);
+}
+.life-schedule-row.work { background: rgba(99,102,241,0.04); }
+.life-schedule-block {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: white;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+}
+.life-schedule-block .blk-label { font-weight: 600; }
+.life-schedule-block .blk-time { font-size: 0.66rem; opacity: 0.85; }
+.life-schedule-block .blk-del {
+  position: absolute; top: 4px; right: 6px;
+  background: rgba(0,0,0,0.25); border: none;
+  color: white; font-size: 0.7rem; border-radius: 4px;
+  width: 18px; height: 18px; cursor: pointer;
+}
+.life-schedule-block.kind-office { background: #3b82f6; }
+.life-schedule-block.kind-deep { background: #6366f1; }
+.life-schedule-block.kind-learn { background: #f59e0b; }
+.life-schedule-block.kind-admin { background: #6b7280; }
+.life-schedule-block.kind-break { background: #10b981; }
+.life-schedule-drag {
+  position: absolute;
+  left: 6px; right: 6px;
+  background: rgba(99,102,241,0.35);
+  border: 2px dashed rgba(99,102,241,0.8);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+/* ── Stat tiles ───────────────────────────────────────────────────── */
+
+.life-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.life-stat {
+  background: var(--bg2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+.life-stat .label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #888);
+  margin-bottom: 6px;
+}
+.life-stat .value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.life-stat .sub {
+  font-size: 0.74rem;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
+
+.life-progress {
+  height: 6px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.life-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+/* ── Search bar ───────────────────────────────────────────────────── */
+
+.life-search {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 0.88rem;
+  outline: none;
+  margin-bottom: 18px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.life-search:focus { border-color: var(--accent); }
+
+/* ── Mobile pass ──────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .life-app { flex-direction: column; height: auto; min-height: 100vh; }
+  .life-sidebar {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 10px;
+    gap: 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .life-sidebar-header { display: none; }
+  .life-nav { flex-direction: row; flex: 1; }
+  .life-nav button { padding: 8px 12px; font-size: 0.8rem; }
+  .life-nav button span { display: none; }
+  .life-sidebar-footer { display: none; }
+  .life-content { padding: 18px 16px; }
+  .life-topbar { padding: 12px 16px; }
+  .life-topbar h1 { font-size: 0.95rem; }
+  .life-agent-dock { width: 100vw; }
+}
+
+/* ── Loud LIFE_DB unconfigured banner ─────────────────────────────── */
+
+.life-config-warn {
+  margin: 60px auto;
+  max-width: 560px;
+  padding: 28px;
+  border: 1px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 14px;
+}
+.life-config-warn h2 { margin: 0 0 8px; font-size: 1.05rem; }
+.life-config-warn p { margin: 6px 0; font-size: 0.86rem; line-height: 1.55; color: var(--text); }
+.life-config-warn code {
+  display: block;
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--bg2, rgba(0,0,0,0.04));
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-family: 'JetBrains Mono', Menlo, monospace;
+  white-space: pre;
+}

@@ -1,0 +1,243 @@
+// Life app schema — lives in a SEPARATE Supabase database from papermind.
+// Connection: env("LIFE_DATABASE_URL")
+// Generated client output: src/generated/life-prisma
+//
+// Conventions:
+//  - All rows are scoped by user_id (life_users.id), enforced in app code.
+//  - Timestamps use timestamptz; the app interprets them in user.timezone (default Asia/Kolkata).
+//  - "Today" / "EOD" semantics live in src/life/lib/time.ts, not in the DB.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/life-prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Users (mirror of papermind admin users — synced on first login to /life)
+// ──────────────────────────────────────────────────────────────────────────────
+model life_users {
+  id                  String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  papermind_user_id   String                @unique @db.Uuid
+  username            String                @unique
+  display_name        String?
+  timezone            String                @default("Asia/Kolkata")
+  eod_hour            Int                   @default(23) // 11 PM local time
+  work_start_hour     Int                   @default(11) // 11 AM IST default
+  work_end_hour       Int                   @default(20) // 8 PM IST default
+  notify_browser      Boolean               @default(false) // user opted into browser notifications
+  created_at          DateTime              @default(now()) @db.Timestamptz()
+  goals               life_goals[]
+  projects            life_projects[]
+  tasks               life_tasks[]
+  journal             life_journal[]
+  pulses              life_project_pulse[]
+  agent_messages      life_agent_messages[]
+  notifications       life_notifications[]
+  time_blocks         life_time_blocks[]
+  learn_items         life_learn_items[]
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Goals — long-lived intentions; each goal owns a tree of projects/tasks
+// ──────────────────────────────────────────────────────────────────────────────
+model life_goals {
+  id          String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id     String          @db.Uuid
+  title       String
+  why         String?
+  category    String          @default("personal") // office | personal | health | learn
+  horizon     String          @default("quarter")  // quarter | year | life
+  status      String          @default("active")   // active | paused | done | dropped
+  target_date DateTime?       @db.Timestamptz()
+  created_at  DateTime        @default(now()) @db.Timestamptz()
+  updated_at  DateTime        @default(now()) @updatedAt @db.Timestamptz()
+  user        life_users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  projects    life_projects[]
+  tasks       life_tasks[]
+
+  @@index([user_id, status])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Projects — concrete bodies of work (office initiative or personal project)
+// ──────────────────────────────────────────────────────────────────────────────
+model life_projects {
+  id            String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String                @db.Uuid
+  goal_id       String?               @db.Uuid
+  name          String
+  description   String?
+  category      String                @default("personal") // office | personal | health | learn
+  status        String                @default("active")   // active | paused | done | dropped
+  health        String                @default("green")    // green | yellow | red
+  // Free-form context the agent uses: links, stakeholders, definition of done, notes
+  context       Json                  @default("{}")
+  created_at    DateTime              @default(now()) @db.Timestamptz()
+  updated_at    DateTime              @default(now()) @updatedAt @db.Timestamptz()
+  user          life_users            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  goal          life_goals?           @relation(fields: [goal_id], references: [id], onDelete: SetNull)
+  tasks         life_tasks[]
+  pulses        life_project_pulse[]
+  agent_threads life_agent_messages[]
+
+  @@index([user_id, status])
+  @@index([user_id, category])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Tasks — the daily unit of work; tagged to a date via scheduled_for
+// ──────────────────────────────────────────────────────────────────────────────
+model life_tasks {
+  id            String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String         @db.Uuid
+  project_id    String?        @db.Uuid
+  goal_id       String?        @db.Uuid
+  title         String
+  notes         String?
+  // Local-date string (YYYY-MM-DD) in the user's timezone — avoids tz drift on "today" queries.
+  scheduled_for String?
+  due_at        DateTime?      @db.Timestamptz()
+  estimate_min  Int?
+  status        String         @default("todo") // todo | doing | done | dropped
+  priority      Int            @default(3)      // 1 (highest) .. 5
+  tags          Json           @default("[]")
+  source        String         @default("manual") // manual | agent | quickadd
+  created_at    DateTime       @default(now()) @db.Timestamptz()
+  updated_at    DateTime       @default(now()) @updatedAt @db.Timestamptz()
+  done_at       DateTime?      @db.Timestamptz()
+  user          life_users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project       life_projects? @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  goal          life_goals?    @relation(fields: [goal_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id, scheduled_for])
+  @@index([user_id, status])
+  @@index([project_id])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Journal — one row per (user, local date). End-of-day reflection.
+// ──────────────────────────────────────────────────────────────────────────────
+model life_journal {
+  id         String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id    String     @db.Uuid
+  date       String     // YYYY-MM-DD in user's timezone
+  summary    String?    // markdown
+  wins       String?
+  blockers   String?
+  tomorrow   String?
+  energy     Int?       // 1..5
+  closed_at  DateTime?  @db.Timestamptz() // when user clicked "close the day"
+  created_at DateTime   @default(now()) @db.Timestamptz()
+  updated_at DateTime   @default(now()) @updatedAt @db.Timestamptz()
+  user       life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, date])
+  @@index([user_id])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Project pulse — the agent's structured read on a project at a point in time
+// ──────────────────────────────────────────────────────────────────────────────
+model life_project_pulse {
+  id              String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id         String        @db.Uuid
+  project_id      String        @db.Uuid
+  last_progress   String?       // what moved since last pulse
+  next_step       String?       // single most important next action
+  whats_missing   String?       // gaps the agent flagged
+  risk            String?       // why it might stall
+  suggested_tasks Json          @default("[]") // [{title, estimate_min, priority}]
+  health          String        @default("green") // green | yellow | red
+  generated_by    String        @default("agent") // agent | user
+  raw             Json?         // full agent output for debugging
+  created_at      DateTime      @default(now()) @db.Timestamptz()
+  user            life_users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project         life_projects @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id, created_at])
+  @@index([user_id, created_at])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Agent chat — persistent thread per (user, optional project scope)
+// ──────────────────────────────────────────────────────────────────────────────
+model life_agent_messages {
+  id         String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id    String         @db.Uuid
+  project_id String?        @db.Uuid // null = global Life thread
+  role       String         // user | assistant | system
+  content    String
+  // Tool calls / structured payloads (e.g. created task ids) for replay
+  meta       Json?
+  created_at DateTime       @default(now()) @db.Timestamptz()
+  user       life_users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project    life_projects? @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, project_id, created_at])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Time blocks — schedule entries on a calendar day
+// start_minute / end_minute = minutes since local midnight (0..1439)
+// kind: office | deep | learn | admin | break
+// ──────────────────────────────────────────────────────────────────────────────
+model life_time_blocks {
+  id           String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id      String     @db.Uuid
+  date         String     // YYYY-MM-DD
+  start_minute Int
+  end_minute   Int
+  label        String
+  kind         String     @default("deep")
+  task_id      String?    @db.Uuid
+  source       String     @default("manual") // manual | agent
+  created_at   DateTime   @default(now()) @db.Timestamptz()
+  user         life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, date])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Learn items — reading queue + completed knowledge
+// source_type: manual | papermind_paper | papermind_article | url
+// status: queue | reading | done | dropped
+// papermind_id stores cross-database UUID (no FK because separate DB)
+// ──────────────────────────────────────────────────────────────────────────────
+model life_learn_items {
+  id            String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String     @db.Uuid
+  title         String
+  source_url    String?
+  source_type   String     @default("manual")
+  papermind_id  String?    @db.Uuid
+  topic         String?
+  notes         String?
+  status        String     @default("queue")
+  added_at      DateTime   @default(now()) @db.Timestamptz()
+  completed_at  DateTime?  @db.Timestamptz()
+  user          life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, status])
+  @@index([user_id, papermind_id])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// In-app notifications — bell icon feed
+// ──────────────────────────────────────────────────────────────────────────────
+model life_notifications {
+  id         String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id    String     @db.Uuid
+  kind       String     // task_due | eod_reminder | pulse_ready | project_at_risk | agent_message
+  title      String
+  body       String?
+  link       String?    // in-app route, e.g. /life/projects/<id>
+  read       Boolean    @default(false)
+  created_at DateTime   @default(now()) @db.Timestamptz()
+  user       life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, read, created_at])
+}
