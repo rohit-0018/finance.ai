@@ -33,12 +33,22 @@ export function fireBrowserNotification(
   }
 }
 
+export interface DueDigest {
+  overdue: LifeTask[]
+  dueToday: LifeTask[]
+  dueTomorrow: LifeTask[]
+}
+
 interface SchedulerOpts {
   user: LifeUser
   todayTasks: () => LifeTask[]
   onEod: () => void
   /** Optional — invoked when the daily finance log reminder fires (22:00). */
   onFinanceLog?: () => void
+  /** Optional — return overdue / due-today / due-tomorrow for the morning brief. */
+  dueDigest?: () => Promise<DueDigest | null>
+  /** Click target when the deadline brief notification is clicked. */
+  onOpenTodos?: () => void
 }
 
 /**
@@ -99,6 +109,32 @@ export function startReminderScheduler(opts: SchedulerOpts): () => void {
             .join('\n')
         )
       }
+    }
+
+    // Morning deadline brief (09:00 local). Pulls all open tasks and counts
+    // how many are overdue or due today/tomorrow, then fires one digest.
+    const briefKey = `life_notify_deadline_brief_${dayKey}`
+    if (h >= 9 && !sessionStorage.getItem(briefKey) && opts.dueDigest) {
+      sessionStorage.setItem(briefKey, '1')
+      opts.dueDigest().then((digest) => {
+        if (!digest) return
+        const { overdue, dueToday, dueTomorrow } = digest
+        const total = overdue.length + dueToday.length + dueTomorrow.length
+        if (total === 0) return
+        const lines: string[] = []
+        if (overdue.length > 0) lines.push(`⚠️ ${overdue.length} overdue`)
+        if (dueToday.length > 0) lines.push(`📅 ${dueToday.length} due today`)
+        if (dueTomorrow.length > 0) lines.push(`⏰ ${dueTomorrow.length} due tomorrow`)
+        const sample = [...overdue, ...dueToday, ...dueTomorrow]
+          .slice(0, 3)
+          .map((t) => `• ${t.title}`)
+          .join('\n')
+        fireBrowserNotification(
+          'Deadline brief',
+          [lines.join(' · '), '', sample].filter(Boolean).join('\n'),
+          opts.onOpenTodos
+        )
+      })
     }
   }
 

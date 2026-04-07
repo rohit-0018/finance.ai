@@ -122,10 +122,16 @@ export interface CreateSeriesInput {
   tags?: string[]
   /** Optional time-of-day (HH:mm) for each occurrence. */
   startTime?: string | null
+  /** Optional hard deadline date (YYYY-MM-DD) — maps to due_at. */
+  dueDate?: string | null
+  /** Optional deadline time-of-day (HH:mm) paired with dueDate. */
+  dueTime?: string | null
   /** First date to materialize from (YYYY-MM-DD). Defaults to today (local). */
   fromDate?: string
   recurrence: RecurrenceConfig
   horizonDays?: number
+  /** Send a Gmail when this task's start_at hits. Persisted under automation. */
+  emailNotify?: boolean
 }
 
 export interface CreateSeriesResult {
@@ -147,6 +153,19 @@ export async function createTaskSeries(input: CreateSeriesInput): Promise<Create
     })()
   const seriesId = `srs_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
+  const baseAutomation: Record<string, unknown> = {}
+  if (input.emailNotify) baseAutomation.email_notify = true
+
+  // Resolve a due_at instant if the user provided a date (and optional time).
+  // The time defaults to end-of-day so a "due today" really means "before
+  // midnight" rather than "before this exact second".
+  const computeDueAt = (forDate: string): string | null => {
+    if (!input.dueDate) return null
+    const time = input.dueTime ?? '23:59'
+    return toIsoLocal(input.dueDate, time)
+    void forDate
+  }
+
   if (input.recurrence.preset === 'none') {
     const t = await createTask({
       userId: input.userId,
@@ -160,12 +179,15 @@ export async function createTaskSeries(input: CreateSeriesInput): Promise<Create
       tags: input.tags ?? [],
       scheduled_for: fromDate,
       start_at: input.startTime ? toIsoLocal(fromDate, input.startTime) : null,
+      due_at: computeDueAt(fromDate),
+      automation: baseAutomation as TaskAutomation,
     })
     return { seriesId: '', created: [t] }
   }
 
   const dates = expandDates(input.recurrence, fromDate, input.horizonDays ?? DEFAULT_HORIZON_DAYS)
   const automation: TaskAutomation & { series_id?: string } = {
+    ...baseAutomation,
     recurring: { rrule: presetToRrule(input.recurrence) },
     series_id: seriesId,
   } as TaskAutomation & { series_id?: string }
@@ -184,6 +206,7 @@ export async function createTaskSeries(input: CreateSeriesInput): Promise<Create
       tags: input.tags ?? [],
       scheduled_for: d,
       start_at: input.startTime ? toIsoLocal(d, input.startTime) : null,
+      due_at: computeDueAt(d),
       automation,
     })
     created.push(t)

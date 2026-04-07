@@ -53,6 +53,7 @@ import {
   stopTimer,
   useActiveTimer,
   formatElapsed,
+  formatDuration,
 } from '../lib/activeTimer'
 import {
   browserNotificationsGranted,
@@ -60,6 +61,7 @@ import {
   fireBrowserNotification,
 } from '../lib/notifier'
 import TaskEditPanel from './todos/TaskEditPanel'
+import CalendarCreateModal from '../components/CalendarCreateModal'
 
 // ──────────────────────────────────────────────────────────────────────
 // Constants
@@ -69,7 +71,7 @@ const ROW_HEIGHT = 68
 const OVERSCAN = 6
 const VIEWPORT_HEIGHT = 640
 
-type DatePreset = 'today' | 'week' | 'month' | 'all' | 'overdue' | 'custom'
+type DatePreset = 'yesterday' | 'today' | 'tomorrow' | 'week' | 'month' | 'all' | 'overdue' | 'custom'
 
 // Smart search parser. Extracts inline filters from a query string.
 //   "fix login bug tag:work p:1"  →  { text: "fix login bug", tags: ["work"], priorities: [1] }
@@ -118,8 +120,16 @@ function presetToRange(
   custom: { from: string; to: string }
 ): { from: string | null; to: string | null; includeUndated: boolean } {
   switch (preset) {
+    case 'yesterday': {
+      const y = isoDateAdd(today, -1)
+      return { from: y, to: y, includeUndated: false }
+    }
     case 'today':
       return { from: today, to: today, includeUndated: false }
+    case 'tomorrow': {
+      const t = isoDateAdd(today, 1)
+      return { from: t, to: t, includeUndated: false }
+    }
     case 'week':
       return { from: today, to: isoDateAdd(today, 6), includeUndated: false }
     case 'month':
@@ -187,6 +197,7 @@ const TodosPage: React.FC = () => {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [createModalOpen, setCreateModalOpen] = useState(false)
 
   // ── Edit panel ──
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -417,12 +428,13 @@ const TodosPage: React.FC = () => {
   // ── Quick reschedule (used by row hover menu) ──
   const quickReschedule = async (
     task: LifeTask,
-    target: 'today' | 'tomorrow' | 'next-week' | 'clear'
+    target: 'yesterday' | 'today' | 'tomorrow' | 'next-week' | 'clear'
   ) => {
     if (!lifeUser) return
     let date: string | null = null
     if (target !== 'clear') {
       const d = new Date(`${today}T00:00:00`)
+      if (target === 'yesterday') d.setDate(d.getDate() - 1)
       if (target === 'tomorrow') d.setDate(d.getDate() + 1)
       if (target === 'next-week') d.setDate(d.getDate() + 7)
       date = d.toISOString().slice(0, 10)
@@ -680,7 +692,16 @@ const TodosPage: React.FC = () => {
   // ──────────────────────────────────────────────────────────────────
   // Render
   // ──────────────────────────────────────────────────────────────────
-  const datePresets: DatePreset[] = ['today', 'week', 'month', 'overdue', 'all', 'custom']
+  const datePresets: DatePreset[] = [
+    'yesterday',
+    'today',
+    'tomorrow',
+    'week',
+    'month',
+    'overdue',
+    'all',
+    'custom',
+  ]
   const allStatuses: TaskStatus[] = ['todo', 'doing', 'done', 'dropped']
 
   return (
@@ -704,6 +725,13 @@ const TodosPage: React.FC = () => {
               onClick={() => setParagraphOpen((v) => !v)}
             >
               {paragraphOpen ? '− paragraph' : '✦ paragraph'}
+            </button>
+            <button
+              className="toggle-paragraph"
+              onClick={() => setCreateModalOpen(true)}
+              title="Open full task editor — schedule, recurring, email reminder, project, etc."
+            >
+              ⊕ new
             </button>
             <button
               className="add-btn"
@@ -913,6 +941,11 @@ const TodosPage: React.FC = () => {
                 const isRunning = activeId === task.id
                 const visibleTags = task.tags?.slice(0, 3) ?? []
                 const extraTags = (task.tags?.length ?? 0) - visibleTags.length
+                const isOverdueRow =
+                  !!task.due_at &&
+                  task.status !== 'done' &&
+                  task.status !== 'dropped' &&
+                  new Date(task.due_at).getTime() < Date.now()
                 return (
                   <div
                     key={task.id}
@@ -926,7 +959,7 @@ const TodosPage: React.FC = () => {
                     }}
                   >
                     <div
-                      className={`todos-row ${task.status === 'done' ? 'done' : ''} ${isRunning ? 'running' : ''}`}
+                      className={`todos-row ${task.status === 'done' ? 'done' : ''} ${isRunning ? 'running' : ''} ${isOverdueRow ? 'is-overdue' : ''}`}
                       onClick={() => setEditingId(task.id)}
                       role="button"
                       tabIndex={0}
@@ -1006,10 +1039,53 @@ const TodosPage: React.FC = () => {
                           <span>m</span>
                         </span>
                         {(task.actual_min ?? 0) > 0 && (
-                          <span className="logged-pill" title="Time logged">
-                            {task.actual_min}m logged
+                          <span
+                            className="logged-pill"
+                            title={`${task.actual_min} minutes logged`}
+                          >
+                            {formatDuration(task.actual_min)} logged
                           </span>
                         )}
+                        {task.due_at &&
+                          (() => {
+                            const due = new Date(task.due_at)
+                            const now = new Date()
+                            const ms = due.getTime() - now.getTime()
+                            const isDone = task.status === 'done' || task.status === 'dropped'
+                            const isOverdue = !isDone && ms < 0
+                            const dayMs = 86_400_000
+                            const dueToday =
+                              !isDone &&
+                              !isOverdue &&
+                              due.toDateString() === now.toDateString()
+                            const dueTomorrow =
+                              !isDone &&
+                              !isOverdue &&
+                              !dueToday &&
+                              ms < 2 * dayMs
+                            const cls = isOverdue
+                              ? 'overdue'
+                              : dueToday
+                              ? 'due-today'
+                              : dueTomorrow
+                              ? 'due-tomorrow'
+                              : 'due-set'
+                            const label = isOverdue
+                              ? `${Math.ceil(-ms / dayMs)}d overdue`
+                              : dueToday
+                              ? 'due today'
+                              : dueTomorrow
+                              ? 'due tomorrow'
+                              : `due ${due.toLocaleDateString()}`
+                            return (
+                              <span
+                                className={`todos-due-pill ${cls}`}
+                                title={`Due ${due.toLocaleString()}`}
+                              >
+                                ⏰ {label}
+                              </span>
+                            )
+                          })()}
                       </div>
 
                       <div className="row-hover-actions" onClick={(e) => e.stopPropagation()}>
@@ -1023,6 +1099,7 @@ const TodosPage: React.FC = () => {
                             ⟳
                           </button>
                           <div className="reschedule-pop">
+                            <button onClick={() => quickReschedule(task, 'yesterday')}>Yesterday</button>
                             <button onClick={() => quickReschedule(task, 'today')}>Today</button>
                             <button onClick={() => quickReschedule(task, 'tomorrow')}>Tomorrow</button>
                             <button onClick={() => quickReschedule(task, 'next-week')}>+1 week</button>
@@ -1106,6 +1183,16 @@ const TodosPage: React.FC = () => {
           />
         )
       })()}
+
+      {createModalOpen && (
+        <CalendarCreateModal
+          onClose={() => setCreateModalOpen(false)}
+          onCreated={() => {
+            load()
+            setCreateModalOpen(false)
+          }}
+        />
+      )}
     </LifeLayout>
   )
 }

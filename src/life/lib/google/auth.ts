@@ -13,6 +13,11 @@ import type { LifeIntegration } from '../../types'
 const SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/calendar.events',
+  // Gmail send + read profile so the Life app can email scheduled-event
+  // notifications from the user's own account. Scope is requested up-front
+  // so we don't need a second consent popup later.
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/userinfo.email',
 ].join(' ')
 
 interface TokenCache {

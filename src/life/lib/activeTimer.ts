@@ -176,3 +176,27 @@ export function formatElapsed(sec: number): string {
   const mm = m % 60
   return `${h}h ${mm.toString().padStart(2, '0')}m`
 }
+
+/**
+ * Format a whole number of minutes as a human-readable duration.
+ *   0   → "0m"
+ *   45  → "45m"
+ *   60  → "1h"
+ *   90  → "1h 30m"
+ *   480 → "8h"
+ *   1500 → "1d 1h" (a "day" here is 24h, intended for occasional time logs)
+ *
+ * Returns "—" for null/undefined/NaN so callers can drop it inline.
+ */
+export function formatDuration(min: number | null | undefined): string {
+  if (min == null || !Number.isFinite(min)) return '—'
+  const total = Math.max(0, Math.round(min))
+  if (total === 0) return '0m'
+  if (total < 60) return `${total}m`
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (h < 24) return m === 0 ? `${h}h` : `${h}h ${m}m`
+  const d = Math.floor(h / 24)
+  const hh = h % 24
+  return hh === 0 ? `${d}d` : `${d}d ${hh}h`
+}

@@ -252,22 +252,30 @@ export async function searchTasks(
     q = q.filter('tags', 'cs', JSON.stringify(filters.tags))
   }
 
-  // Date filtering. If both bounds are absent we don't constrain.
-  // includeUndated lets us OR in null scheduled_for rows.
+  // Date filtering. Two paths:
+  //  - includeUndated=false → use direct .gte/.lte. This is the common case
+  //    for "today" / "tomorrow" / "this week" filters and is by far the most
+  //    reliable. Wrapping a single clause in `q.or('and(...)')` was causing
+  //    PostgREST to mis-parse and silently return zero rows on some Supabase
+  //    versions, which is what made today/tomorrow look empty.
+  //  - includeUndated=true → fall back to the OR-with-null clause so undated
+  //    tasks still appear under "All".
   const hasFrom = !!filters.fromDate
   const hasTo = !!filters.toDate
   const includeUndated = filters.includeUndated !== false
   if (hasFrom || hasTo) {
-    const clauses: string[] = []
-    const between =
-      hasFrom && hasTo
-        ? `and(scheduled_for.gte.${filters.fromDate},scheduled_for.lte.${filters.toDate})`
-        : hasFrom
-        ? `scheduled_for.gte.${filters.fromDate}`
-        : `scheduled_for.lte.${filters.toDate}`
-    clauses.push(between)
-    if (includeUndated) clauses.push('scheduled_for.is.null')
-    q = q.or(clauses.join(','))
+    if (!includeUndated) {
+      if (hasFrom) q = q.gte('scheduled_for', filters.fromDate as string)
+      if (hasTo) q = q.lte('scheduled_for', filters.toDate as string)
+    } else {
+      const between =
+        hasFrom && hasTo
+          ? `and(scheduled_for.gte.${filters.fromDate},scheduled_for.lte.${filters.toDate})`
+          : hasFrom
+          ? `scheduled_for.gte.${filters.fromDate}`
+          : `scheduled_for.lte.${filters.toDate}`
+      q = q.or(`${between},scheduled_for.is.null`)
+    }
   }
 
   q = q

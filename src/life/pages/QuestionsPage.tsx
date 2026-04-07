@@ -12,6 +12,7 @@ import {
 import type { LifeTask, LifeProject } from '../types'
 import { todayLocal, prettyDate } from '../lib/time'
 import { resolveWorkspaceFromTitle } from '../lib/prefixRouter'
+import { formatDuration } from '../lib/activeTimer'
 
 // Convention: a "question" is a LifeTask carrying the `question` tag.
 // This lets questions inherit scheduling, calendar surfacing, projects,
@@ -344,7 +345,7 @@ const QuestionsPage: React.FC = () => {
                     </span>
                   )}
                   {projName && <span className="life-pill office">{projName}</span>}
-                  {q.estimate_min && <span>~{q.estimate_min}m</span>}
+                  {q.estimate_min && <span>~{formatDuration(q.estimate_min)}</span>}
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                   {q.status !== 'done' && (

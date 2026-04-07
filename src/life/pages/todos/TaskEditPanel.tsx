@@ -49,6 +49,7 @@ import {
   stopTimer,
   useActiveTimer,
   formatElapsed,
+  formatDuration,
 } from '../../lib/activeTimer'
 
 const DEBOUNCE_MS = 400
@@ -664,7 +665,7 @@ const TaskEditPanel: React.FC<TaskEditPanelProps> = ({
               <label>
                 <span className="lbl small">Logged</span>
                 <div className="logged">
-                  {totalActualMin + liveMinForThis} min
+                  {formatDuration(totalActualMin + liveMinForThis)}
                   {isThisRunning && (
                     <span className="live-dot">{formatElapsed(elapsedSec)}</span>
                   )}
@@ -845,7 +846,9 @@ const TaskEditPanel: React.FC<TaskEditPanelProps> = ({
                       }}
                     />
                     <span className="sub-logged">
-                      {(s.actual_min ?? 0) + (subRunning ? Math.floor(elapsedSec / 60) : 0)}m
+                      {formatDuration(
+                        (s.actual_min ?? 0) + (subRunning ? Math.floor(elapsedSec / 60) : 0)
+                      )}
                     </span>
                     {subRunning ? (
                       <button className="timer-btn small stop" onClick={stopMine} title="Stop timer">

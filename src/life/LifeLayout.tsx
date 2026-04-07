@@ -19,6 +19,7 @@ import {
   requestBrowserNotifications,
   startReminderScheduler,
 } from './lib/notifier'
+import { startEmailScheduler } from './lib/emailNotifier'
 import { startAutomationEngine } from './lib/automationEngine'
 import { maybeInjectFiveYearTask } from './lib/fiveYearInjection'
 import { getActiveMode } from './lib/modes'
@@ -255,12 +256,51 @@ const LifeLayout: React.FC<LifeLayoutProps> = ({ title, children }) => {
       todayTasks: () => todayTasksRef.current,
       onEod: () => setEodOpen(true),
       onFinanceLog: () => navigate('/life/finance'),
+      onOpenTodos: () => navigate('/life/todos'),
+      dueDigest: async () => {
+        try {
+          const now = Date.now()
+          const dayMs = 86_400_000
+          const endOfTomorrow = new Date(now + 2 * dayMs)
+          endOfTomorrow.setHours(23, 59, 59, 999)
+          // Pull all open tasks with a due_at within (-30 days, +2 days].
+          const { data, error } = await (await import('./lib/db/_client')).lifeDb()
+            .from('life_tasks')
+            .select('*')
+            .eq('user_id', lifeUser.id)
+            .in('status', ['todo', 'doing'])
+            .gte('due_at', new Date(now - 30 * dayMs).toISOString())
+            .lte('due_at', endOfTomorrow.toISOString())
+            .limit(200)
+          if (error) return null
+          const overdue: LifeTask[] = []
+          const dueToday: LifeTask[] = []
+          const dueTomorrow: LifeTask[] = []
+          const todayStr = new Date().toDateString()
+          const tomorrowStr = new Date(now + dayMs).toDateString()
+          for (const t of (data ?? []) as LifeTask[]) {
+            if (!t.due_at) continue
+            const d = new Date(t.due_at)
+            if (d.getTime() < now) overdue.push(t)
+            else if (d.toDateString() === todayStr) dueToday.push(t)
+            else if (d.toDateString() === tomorrowStr) dueTomorrow.push(t)
+          }
+          return { overdue, dueToday, dueTomorrow }
+        } catch {
+          return null
+        }
+      },
     })
+    // Email notification poller — fires Gmail messages for opted-in tasks
+    // whose start_at has just passed. No-ops gracefully when Google isn't
+    // connected.
+    const stopEmail = startEmailScheduler({ userId: lifeUser.id })
 
     return () => {
       cancelled = true
       clearInterval(refreshId)
       stop()
+      stopEmail()
     }
   }, [lifeUser, notifGranted])
 
@@ -441,7 +481,7 @@ const ThemeMenu: React.FC = () => {
         <>
           <div
             onClick={() => setOpen(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 999 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
           />
           <div
             role="menu"
@@ -455,7 +495,7 @@ const ThemeMenu: React.FC = () => {
               borderRadius: 10,
               padding: 4,
               boxShadow: 'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
-              zIndex: 1000,
+              zIndex: 9999,
             }}
           >
             {THEMES.map((t) => (
