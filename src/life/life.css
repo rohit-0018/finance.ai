@@ -185,6 +185,8 @@
 .life-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
   padding: 28px 32px;
 }
 
@@ -1456,7 +1458,49 @@
   /* Touch targets */
   .life-task-row { padding: 13px 14px; }
   .life-btn { min-height: 38px; }
+
+  /* ── Todos page — collapse the row to title + check + one essential pill ─ */
+  .todos-page { gap: 12px; }
+  .todos-capture { padding: 6px 6px 6px 12px; }
+  .todos-quickadd { gap: 6px; height: auto; flex-wrap: wrap; padding: 6px 0; }
+  .todos-quickadd input { min-width: 0; flex: 1 1 100%; order: 1; padding: 8px 0; }
+  .todos-quickadd .toggle-paragraph { order: 2; padding: 6px 8px; }
+  .todos-quickadd .add-btn { order: 3; margin-left: auto; }
+  .todos-filterbar { padding: 10px 12px; gap: 8px 12px; }
+  .todos-filter-group { flex-wrap: wrap; }
+  .todos-search { min-width: 0; flex: 1 1 100%; }
+  .todos-statusline { flex-wrap: wrap; gap: 6px; }
+  .todos-row { gap: 8px; padding: 0 12px; height: auto; min-height: 64px; }
+  .todos-title .title { font-size: 0.88rem; white-space: normal; }
+  .todos-title .notes { white-space: normal; }
+  .todos-meta { gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 50%; }
+  .todos-meta .todos-pill,
+  .todos-meta .logged-pill { font-size: 0.66rem; padding: 3px 7px; }
+  .todos-meta .todos-pill .eta-input { width: 26px; }
+  .todos-del { opacity: 1; width: 22px; height: 22px; }
+  .todos-tagbar { gap: 6px; padding: 8px 10px; }
+
+  /* Subtasks indent — keep it sensible on a narrow viewport */
+  .todos-subtasks { padding: 4px 12px 12px 36px; }
+
+  /* ── Questions page (uses inline styles + .life-card) ─ */
+  .life-card { padding: 14px 14px; }
+  .life-card-meta { flex-wrap: wrap; }
+
+  /* Inputs and selects should never push past viewport */
+  .life-content input,
+  .life-content select,
+  .life-content textarea { max-width: 100%; box-sizing: border-box; }
 }
+
+/* ── Universal safety: nothing inside .life-content may bleed horizontally ─ */
+.life-content { max-width: 100%; }
+.life-content > * { max-width: 100%; }
+.life-content img,
+.life-content video,
+.life-content pre,
+.life-content table { max-width: 100%; }
+.life-content pre { overflow-x: auto; }
 
 /* ── Tiny phone (<= 380px) — last-ditch sanity ──────────────────── */
 @media (max-width: 380px) {

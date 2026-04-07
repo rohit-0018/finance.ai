@@ -70,11 +70,14 @@ const ArticlesPage: React.FC = () => {
   const [progress, setProgress] = useState('')
   const [results, setResults] = useState<IngestResult[]>([])
   const [showIngest, setShowIngest] = useState(false)
+  const [makePrivate, setMakePrivate] = useState(false)
   const [search, setSearch] = useState('')
 
   useEffect(() => {
-    dbGetArticles().then(setArticles).finally(() => setLoading(false))
-  }, [])
+    dbGetArticles({ currentUserId: userId ?? null, isAdmin: isAdmin() })
+      .then(setArticles)
+      .finally(() => setLoading(false))
+  }, [userId, isAdmin])
 
   const handleIngest = useCallback(async () => {
     const urlList = urls.split('\n').map((u) => u.trim()).filter((u) => u.startsWith('http'))
@@ -90,7 +93,18 @@ const ArticlesPage: React.FC = () => {
         const { title, content } = await fetchPageContent(url)
         setProgress(`Analyzing: ${title.slice(0, 40)}...`)
         const analysis = await summarizeArticle(title, content)
-        const article = await dbSaveArticle({ url, title, content, summary: analysis.summary, topic: analysis.topic, tags: analysis.tags, addedBy: userId })
+        const article = await dbSaveArticle({
+          url,
+          title,
+          content,
+          summary: analysis.summary,
+          topic: analysis.topic,
+          tags: analysis.tags,
+          addedBy: userId,
+          isPrivate: makePrivate,
+          // Admins auto-approve their public articles. Regular users wait.
+          approved: isAdmin() ? true : false,
+        })
         setArticles((prev) => [article, ...prev.filter((a) => a.id !== article.id)])
         newResults.push({ url, status: 'success', message: title })
       } catch (err) {
@@ -107,7 +121,7 @@ const ArticlesPage: React.FC = () => {
     const ok = newResults.filter((r) => r.status === 'success').length
     if (ok > 0) toast.success(`${ok} article${ok > 1 ? 's' : ''} saved`)
     if (newResults.every((r) => r.status === 'success')) { setUrls(''); setShowIngest(false) }
-  }, [urls, userId])
+  }, [urls, userId, makePrivate, isAdmin])
 
   const handleDelete = useCallback(async (id: string) => {
     if (!window.confirm('Delete this article?')) return
@@ -131,15 +145,18 @@ const ArticlesPage: React.FC = () => {
         <div className="page-title">Articles</div>
         <div className="page-actions">
           {isAdmin() && (
-            <button className="btn btn-primary" onClick={() => setShowIngest(!showIngest)}>
-              {showIngest ? 'Close' : '+ Add Articles'}
+            <button className="btn btn-sm" onClick={() => navigate('/admin/articles')}>
+              Approval queue
             </button>
           )}
+          <button className="btn btn-primary" onClick={() => setShowIngest(!showIngest)}>
+            {showIngest ? 'Close' : '+ Add Articles'}
+          </button>
         </div>
       </div>
 
-      {/* Admin ingest panel */}
-      {showIngest && isAdmin() && (
+      {/* Ingest panel — open to all signed-in users */}
+      {showIngest && (
         <div className="al-ingest">
           <div className="al-ingest-inner">
             <div className="al-ingest-label">Paste article URLs (one per line)</div>
@@ -149,7 +166,18 @@ const ArticlesPage: React.FC = () => {
               placeholder={'https://example.com/article-one\nhttps://blog.example.com/post-two'}
               rows={3}
             />
-            <div className="al-ingest-bar">
+            <div className="al-ingest-bar" style={{ flexWrap: 'wrap', gap: 12 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem', cursor: 'pointer' }}
+                title="Private articles are visible only to you and never need approval"
+              >
+                <input
+                  type="checkbox"
+                  checked={makePrivate}
+                  onChange={(e) => setMakePrivate(e.target.checked)}
+                />
+                Private (only visible to me)
+              </label>
               <button className="btn btn-primary" onClick={handleIngest} disabled={ingesting || !urls.trim()}>
                 {ingesting ? progress || 'Processing...' : 'Extract & Save'}
               </button>
@@ -157,6 +185,12 @@ const ArticlesPage: React.FC = () => {
                 <button className="btn btn-sm" onClick={() => setResults([])}>Clear log</button>
               )}
             </div>
+            {!isAdmin() && !makePrivate && (
+              <div style={{ marginTop: 8, fontSize: '0.78rem', color: 'var(--text2, #888)' }}>
+                Public articles need admin approval before they appear for everyone. They'll show up
+                in your list with a "Pending review" badge until approved.
+              </div>
+            )}
             {results.length > 0 && (
               <div className="al-ingest-log">
                 {results.map((r, i) => (
@@ -191,7 +225,7 @@ const ArticlesPage: React.FC = () => {
           <div className="empty-state-icon">A</div>
           <div className="empty-state-title">{search ? 'No matches' : 'No articles yet'}</div>
           <div className="empty-state-desc">
-            {search ? 'Try a different search.' : isAdmin() ? 'Click "+ Add Articles" to start ingesting.' : 'Articles will appear here once an admin adds them.'}
+            {search ? 'Try a different search.' : 'Click "+ Add Articles" to add one. Public articles need admin approval before everyone can see them.'}
           </div>
         </div>
       ) : (
@@ -260,11 +294,19 @@ const ArticleCard: React.FC<{
 
       {/* Bottom bar */}
       <div className="al-card-bottom" onClick={(e) => e.stopPropagation()}>
-        {analysis ? (
-          <span className="al-card-badge analyzed">Deep Read</span>
-        ) : (
-          <span className="al-card-badge pending">Not analyzed</span>
-        )}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {analysis ? (
+            <span className="al-card-badge analyzed">Deep Read</span>
+          ) : (
+            <span className="al-card-badge pending">Not analyzed</span>
+          )}
+          {article.is_private && (
+            <span className="al-card-badge pending" title="Only you can see this">Private</span>
+          )}
+          {!article.is_private && !article.approved && (
+            <span className="al-card-badge pending" title="Awaiting admin approval">Pending review</span>
+          )}
+        </div>
         <div className="al-card-actions">
           <a href={article.url} target="_blank" rel="noopener noreferrer" className="al-card-link" onClick={(e) => e.stopPropagation()}>
             Source

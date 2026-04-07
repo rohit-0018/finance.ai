@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { dbGetArticle, dbUpdateArticleAnalysis } from '../lib/supabase'
 import { generateDeepAnalysis, articleChat } from '../lib/anthropic'
+import { useAppStore } from '../store'
 import type { Article, DeepAnalysis } from '../types'
 import TagPill from '../components/TagPill'
 import { formatRelative } from '../lib/utils'
@@ -29,6 +30,8 @@ const SECTION_META: Array<{
 const ArticleReaderPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const currentUserId = useAppStore((s) => s.currentUser?.id)
+  const isAdmin = useAppStore((s) => s.isAdmin)
   const [article, setArticle] = useState<Article | null>(null)
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
@@ -44,8 +47,22 @@ const ArticleReaderPage: React.FC = () => {
 
   useEffect(() => {
     if (!id) return
-    dbGetArticle(id).then(setArticle).catch(() => toast.error('Article not found')).finally(() => setLoading(false))
-  }, [id])
+    dbGetArticle(id)
+      .then((a) => {
+        // Visibility guard: private articles are only readable by their owner
+        // (or an admin); pending public articles only by their submitter or admin.
+        const isOwner = a.added_by && a.added_by === currentUserId
+        const allowed = isAdmin() || isOwner || (!a.is_private && a.approved)
+        if (!allowed) {
+          toast.error('You do not have access to this article')
+          navigate('/articles')
+          return
+        }
+        setArticle(a)
+      })
+      .catch(() => toast.error('Article not found'))
+      .finally(() => setLoading(false))
+  }, [id, currentUserId, isAdmin, navigate])
 
   const handleAnalyze = useCallback(async () => {
     if (!article) return

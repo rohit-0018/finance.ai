@@ -103,6 +103,8 @@ export interface Article {
   tags: string[]
   analysis: DeepAnalysis | null
   added_by: string | null
+  is_private: boolean
+  approved: boolean
   created_at: string
 }
 

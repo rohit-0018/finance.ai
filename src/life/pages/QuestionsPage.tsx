@@ -174,7 +174,7 @@ const QuestionsPage: React.FC = () => {
 
       {/* Quick capture */}
       <div className="life-card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input
             type="text"
             value={draft}
@@ -187,7 +187,8 @@ const QuestionsPage: React.FC = () => {
             }}
             placeholder="What question is on your mind? (prefix with Ofc / Prs to route)"
             style={{
-              flex: 1,
+              flex: '1 1 200px',
+              minWidth: 0,
               padding: 10,
               border: '1px solid var(--border)',
               borderRadius: 8,
@@ -195,6 +196,7 @@ const QuestionsPage: React.FC = () => {
               color: 'var(--text)',
               fontSize: '0.95rem',
               outline: 'none',
+              boxSizing: 'border-box',
             }}
           />
           <button
@@ -278,7 +280,7 @@ const QuestionsPage: React.FC = () => {
           placeholder="Search questions…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ maxWidth: 280 }}
+          style={{ maxWidth: 280, minWidth: 0, flex: '1 1 180px' }}
         />
       </div>
 

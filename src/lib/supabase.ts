@@ -476,6 +476,8 @@ export async function dbSaveArticle(article: {
   topic: string
   tags: string[]
   addedBy?: string
+  isPrivate?: boolean
+  approved?: boolean
 }): Promise<Article> {
   const { data, error } = await supabase
     .from('articles')
@@ -487,6 +489,10 @@ export async function dbSaveArticle(article: {
       topic: article.topic,
       tags: article.tags,
       added_by: article.addedBy ?? null,
+      is_private: article.isPrivate ?? false,
+      // Private articles don't need approval (only owner sees them).
+      // Public articles default to unapproved unless caller (admin) overrides.
+      approved: article.isPrivate ? true : (article.approved ?? false),
     }, { onConflict: 'url' })
     .select()
     .single()
@@ -495,12 +501,32 @@ export async function dbSaveArticle(article: {
   return data as Article
 }
 
-export async function dbGetArticles(): Promise<Article[]> {
-  const { data, error } = await supabase
+// Visibility rules:
+//   - admin: sees everything (approved + unapproved + everyone's private)
+//   - regular user: sees approved+public articles, plus their own private/pending ones
+export async function dbGetArticles(opts?: {
+  currentUserId?: string | null
+  isAdmin?: boolean
+}): Promise<Article[]> {
+  let query = supabase
     .from('articles')
     .select('*')
     .order('created_at', { ascending: false })
 
+  if (!opts?.isAdmin) {
+    const uid = opts?.currentUserId ?? null
+    if (uid) {
+      // Public+approved OR mine
+      query = query.or(
+        `and(is_private.eq.false,approved.eq.true),added_by.eq.${uid}`
+      )
+    } else {
+      // Anonymous fallback — only public+approved
+      query = query.eq('is_private', false).eq('approved', true)
+    }
+  }
+
+  const { data, error } = await query
   if (error) throw new Error(`Failed to fetch articles: ${error.message}`)
   return (data ?? []) as Article[]
 }
@@ -514,6 +540,28 @@ export async function dbGetArticle(id: string): Promise<Article> {
 
   if (error) throw new Error(`Failed to fetch article: ${error.message}`)
   return data as Article
+}
+
+// Pending public articles awaiting admin approval.
+export async function dbGetPendingArticles(): Promise<Article[]> {
+  const { data, error } = await supabase
+    .from('articles')
+    .select('*')
+    .eq('approved', false)
+    .eq('is_private', false)
+    .order('created_at', { ascending: false })
+
+  if (error) throw new Error(`Failed to fetch pending articles: ${error.message}`)
+  return (data ?? []) as Article[]
+}
+
+export async function dbApproveArticle(id: string, approved: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('articles')
+    .update({ approved })
+    .eq('id', id)
+
+  if (error) throw new Error(`Failed to update article approval: ${error.message}`)
 }
 
 export async function dbUpdateArticleAnalysis(id: string, analysis: unknown): Promise<void> {
