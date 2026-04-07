@@ -31,6 +31,7 @@ import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 
 const NAV: Array<{ path: string; label: string; icon: React.ReactNode }> = [
   { path: '/life', label: 'Today', icon: <Icon kind="sun" /> },
+  { path: '/life/todos', label: 'Todos', icon: <Icon kind="check" /> },
   { path: '/life/work', label: 'Work', icon: <Icon kind="briefcase" /> },
   { path: '/life/personal', label: 'Personal', icon: <Icon kind="heart" /> },
   { path: '/life/learnings', label: 'Learnings', icon: <Icon kind="bulb" /> },
@@ -73,6 +74,8 @@ function Icon({ kind }: { kind: string }) {
       return (<svg {...p}><path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2a7 7 0 0 0-4 12.73V17h8v-2.27A7 7 0 0 0 12 2z" /></svg>)
     case 'brain':
       return (<svg {...p}><path d="M9 3a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3v0a3 3 0 0 0 3 3v0a3 3 0 0 0 3 3v2a3 3 0 0 0 6 0v-2a3 3 0 0 0 3-3v0a3 3 0 0 0 3-3v0a3 3 0 0 0-3-3V6a3 3 0 0 0-6 0" /></svg>)
+    case 'check':
+      return (<svg {...p}><polyline points="20 6 9 17 4 12" /></svg>)
     default:
       return null
   }

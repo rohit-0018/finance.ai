@@ -172,6 +172,7 @@ model life_tasks {
   workspace_id       String         @db.Uuid
   project_id         String?        @db.Uuid
   goal_id            String?        @db.Uuid
+  parent_task_id     String?        @db.Uuid
   title              String
   notes              String?
   // Legacy local-date string. Kept for backward compat + fast "today" filters.
@@ -207,6 +208,8 @@ model life_tasks {
   project            life_projects? @relation(fields: [project_id], references: [id], onDelete: SetNull)
   goal               life_goals?    @relation(fields: [goal_id], references: [id], onDelete: SetNull)
   plan               life_plans?    @relation(fields: [plan_id], references: [id], onDelete: SetNull)
+  parent             life_tasks?    @relation("TaskSubtasks", fields: [parent_task_id], references: [id], onDelete: Cascade)
+  subtasks           life_tasks[]   @relation("TaskSubtasks")
   waiting_on         life_waiting_on[]
   stakes             life_stakes[]
   estimates          life_estimates[]
@@ -217,6 +220,7 @@ model life_tasks {
   @@index([project_id])
   @@index([user_id, start_at])
   @@index([user_id, due_at])
+  @@index([parent_task_id])
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

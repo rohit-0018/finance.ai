@@ -172,6 +172,7 @@ export interface LifeTask {
   workspace_id: string
   project_id: string | null
   goal_id: string | null
+  parent_task_id: string | null
   title: string
   notes: string | null
   scheduled_for: string | null // YYYY-MM-DD — legacy

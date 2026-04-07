@@ -5,6 +5,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import './life.css'
 
 const TodayPage = lazy(() => import('./pages/TodayPage'))
+const TodosPage = lazy(() => import('./pages/TodosPage'))
 const SchedulePage = lazy(() => import('./pages/SchedulePage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
@@ -32,6 +33,7 @@ const LifeApp: React.FC = () => (
   <Suspense fallback={<Loading />}>
     <Routes>
       <Route index element={<TodayPage />} />
+      <Route path="todos" element={<TodosPage />} />
       <Route path="schedule" element={<SchedulePage />} />
       <Route path="projects" element={<ProjectsPage />} />
       <Route path="projects/:id" element={<ProjectDetailPage />} />

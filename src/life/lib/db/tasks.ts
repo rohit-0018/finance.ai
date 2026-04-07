@@ -63,6 +63,7 @@ export async function createTask(input: {
   notes?: string
   project_id?: string | null
   goal_id?: string | null
+  parent_task_id?: string | null
   scheduled_for?: string | null
   start_at?: string | null
   due_at?: string | null
@@ -88,6 +89,7 @@ export async function createTask(input: {
       notes: input.notes ?? null,
       project_id: input.project_id ?? null,
       goal_id: input.goal_id ?? null,
+      parent_task_id: input.parent_task_id ?? null,
       scheduled_for: input.scheduled_for ?? todayLocal(),
       start_at: input.start_at ?? null,
       due_at: input.due_at ?? null,
@@ -140,6 +142,212 @@ export async function updateTask(
 export async function deleteTask(userId: string, id: string): Promise<void> {
   const { error } = await lifeDb().from('life_tasks').delete().eq('id', id).eq('user_id', userId)
   if (error) throw new Error(`deleteTask: ${error.message}`)
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// TodosPage helpers — paginated search + subtask hierarchy
+// ──────────────────────────────────────────────────────────────────────
+
+export interface TaskSearchFilters {
+  /** YYYY-MM-DD inclusive lower bound on scheduled_for. */
+  fromDate?: string | null
+  /** YYYY-MM-DD inclusive upper bound on scheduled_for. */
+  toDate?: string | null
+  /** Show tasks with no scheduled_for? Default true. */
+  includeUndated?: boolean
+  statuses?: TaskStatus[]
+  /** Title ILIKE substring. */
+  query?: string
+  /** Title/notes search — applied AFTER smart-prefix parsing in the page. */
+  searchInNotes?: boolean
+  /** Tag filter (rows must contain ALL of these tags). */
+  tags?: string[]
+  /** Priority filter — rows must match one of these priorities (1..5). */
+  priorities?: number[]
+  /** Default true — hides subtasks from the top-level list. */
+  parentsOnly?: boolean
+  workspaceId?: string | null
+}
+
+export interface TaskSearchPage {
+  rows: LifeTask[]
+  total: number
+  /** True if more rows exist past `offset + rows.length`. */
+  hasMore: boolean
+}
+
+/**
+ * Paginated, filterable task search for the Todos page. Uses Supabase's
+ * `.range(start, end)` for offset pagination and asks for an exact count so
+ * the UI can render "1,234 tasks" and stop loading at the right point.
+ */
+export async function searchTasks(
+  userId: string,
+  filters: TaskSearchFilters,
+  pagination: { offset: number; limit: number }
+): Promise<TaskSearchPage> {
+  const { offset, limit } = pagination
+  let q = lifeDb()
+    .from('life_tasks')
+    .select('*', { count: 'exact' })
+    .eq('user_id', userId)
+
+  if (filters.workspaceId) q = q.eq('workspace_id', filters.workspaceId)
+  if (filters.parentsOnly !== false) q = q.is('parent_task_id', null)
+
+  if (filters.statuses && filters.statuses.length > 0) {
+    q = q.in('status', filters.statuses)
+  }
+
+  if (filters.query && filters.query.trim()) {
+    // Escape Postgres LIKE wildcards in user input.
+    const safe = filters.query.trim().replace(/[%_\\]/g, (c) => `\\${c}`)
+    if (filters.searchInNotes) {
+      // Match in title OR notes — PostgREST `or()` syntax.
+      q = q.or(`title.ilike.%${safe}%,notes.ilike.%${safe}%`)
+    } else {
+      q = q.ilike('title', `%${safe}%`)
+    }
+  }
+
+  if (filters.priorities && filters.priorities.length > 0) {
+    q = q.in('priority', filters.priorities)
+  }
+
+  if (filters.tags && filters.tags.length > 0) {
+    // life_tasks.tags is jsonb storing a JSON array. We need to send
+    //   ?tags=cs.["work","urgent"]
+    // i.e. PostgREST `cs` (contains) with a JSON array literal.
+    //
+    // BEWARE: supabase-js `.contains('tags', ['work'])` serializes the JS
+    // array as a PostgreSQL ARRAY literal `{"work"}`, NOT as JSON. That
+    // syntax is invalid for a jsonb column and silently returns zero rows
+    // (no error, just an empty result set — which is exactly what made
+    // tag search look "broken" in the UI).
+    //
+    // The fix is to bypass the array-aware serializer and use the raw
+    // `.filter()` method with `JSON.stringify`, which produces the correct
+    // `cs.["work","urgent"]` query string.
+    q = q.filter('tags', 'cs', JSON.stringify(filters.tags))
+  }
+
+  // Date filtering. If both bounds are absent we don't constrain.
+  // includeUndated lets us OR in null scheduled_for rows.
+  const hasFrom = !!filters.fromDate
+  const hasTo = !!filters.toDate
+  const includeUndated = filters.includeUndated !== false
+  if (hasFrom || hasTo) {
+    const clauses: string[] = []
+    const between =
+      hasFrom && hasTo
+        ? `and(scheduled_for.gte.${filters.fromDate},scheduled_for.lte.${filters.toDate})`
+        : hasFrom
+        ? `scheduled_for.gte.${filters.fromDate}`
+        : `scheduled_for.lte.${filters.toDate}`
+    clauses.push(between)
+    if (includeUndated) clauses.push('scheduled_for.is.null')
+    q = q.or(clauses.join(','))
+  }
+
+  q = q
+    .order('scheduled_for', { ascending: true, nullsFirst: false })
+    .order('priority', { ascending: true })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1)
+
+  const { data, error, count } = await q
+  if (error) throw new Error(`searchTasks: ${error.message}`)
+  const rows = (data ?? []) as LifeTask[]
+  const total = count ?? rows.length
+  return {
+    rows,
+    total,
+    hasMore: offset + rows.length < total,
+  }
+}
+
+/**
+ * List all distinct tags the user has across their tasks. Used to populate
+ * the Todos page tag filter and edit panel autocomplete.
+ *
+ * Supabase doesn't have a simple "distinct unnested array values" call we
+ * can express via the JS client without an RPC, so we read the tags column
+ * for the user (capped) and dedupe in memory. Cheap enough for personal
+ * todo scale; revisit when a single user crosses ~50k tasks.
+ */
+export async function listAllTags(
+  userId: string,
+  workspaceId?: string | null
+): Promise<string[]> {
+  let q = lifeDb()
+    .from('life_tasks')
+    .select('tags')
+    .eq('user_id', userId)
+    .limit(2000)
+  if (workspaceId) q = q.eq('workspace_id', workspaceId)
+  const { data, error } = await q
+  if (error) throw new Error(`listAllTags: ${error.message}`)
+  const seen = new Set<string>()
+  for (const row of (data ?? []) as { tags: unknown }[]) {
+    const arr = Array.isArray(row.tags) ? (row.tags as unknown[]) : []
+    for (const t of arr) {
+      if (typeof t === 'string' && t.trim()) seen.add(t.trim())
+    }
+  }
+  return Array.from(seen).sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * Add minutes to a task's actual_min counter. We re-read the row first to
+ * avoid clobbering concurrent updates — supabase-js has no atomic increment
+ * outside an RPC. Returns the new total. Negative deltas are clamped at 0.
+ */
+export async function addActualMinutes(
+  userId: string,
+  taskId: string,
+  deltaMin: number
+): Promise<number> {
+  if (!Number.isFinite(deltaMin) || deltaMin === 0) {
+    const { data, error } = await lifeDb()
+      .from('life_tasks')
+      .select('actual_min')
+      .eq('id', taskId)
+      .eq('user_id', userId)
+      .single()
+    if (error) throw new Error(`addActualMinutes(read): ${error.message}`)
+    return (data?.actual_min as number | null) ?? 0
+  }
+  const { data: row, error: readErr } = await lifeDb()
+    .from('life_tasks')
+    .select('actual_min')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single()
+  if (readErr) throw new Error(`addActualMinutes(read): ${readErr.message}`)
+  const current = (row?.actual_min as number | null) ?? 0
+  const next = Math.max(0, Math.round(current + deltaMin))
+  const { error: updErr } = await lifeDb()
+    .from('life_tasks')
+    .update({ actual_min: next })
+    .eq('id', taskId)
+    .eq('user_id', userId)
+  if (updErr) throw new Error(`addActualMinutes(write): ${updErr.message}`)
+  return next
+}
+
+export async function listSubtasks(
+  userId: string,
+  parentTaskId: string
+): Promise<LifeTask[]> {
+  const { data, error } = await lifeDb()
+    .from('life_tasks')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('parent_task_id', parentTaskId)
+    .order('priority', { ascending: true })
+    .order('created_at', { ascending: true })
+  if (error) throw new Error(`listSubtasks: ${error.message}`)
+  return (data ?? []) as LifeTask[]
 }
 
 /** Project finish-rate — done / (done + open) within the project. */
