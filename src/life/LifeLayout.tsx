@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
 import { useLifeStore } from './store'
@@ -111,6 +112,14 @@ function Icon({ kind }: { kind: string }) {
       return (<svg {...p}><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>)
     case 'wallet':
       return (<svg {...p}><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4z" /></svg>)
+    case 'menu':
+      return (<svg {...p}><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>)
+    case 'close':
+      return (<svg {...p}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>)
+    case 'more':
+      return (<svg {...p}><circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" /></svg>)
+    case 'grid':
+      return (<svg {...p}><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></svg>)
     default:
       return null
   }
@@ -140,7 +149,23 @@ const LifeLayout: React.FC<LifeLayoutProps> = ({ title, children }) => {
   const [notifGranted, setNotifGranted] = useState(browserNotificationsGranted())
   const [streak, setStreak] = useState(0)
   const [alignment, setAlignment] = useState<AlignmentSnapshot | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [overflowOpen, setOverflowOpen] = useState(false)
   const todayTasksRef = useRef<LifeTask[]>([])
+
+  // Auto-close drawer/overflow on route change so navigation feels snappy on mobile.
+  useEffect(() => {
+    setDrawerOpen(false)
+    setOverflowOpen(false)
+  }, [location.pathname])
+
+  // Lock body scroll while drawer is open (mobile only — desktop sidebar is static).
+  useEffect(() => {
+    if (!drawerOpen) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [drawerOpen])
 
   // Sync papermind admin -> life_users on first /life mount
   useEffect(() => {
@@ -351,97 +376,235 @@ LIFE_DATABASE_URL=postgresql://...`}
   const accent = activeWorkspace?.accent_color ?? '#6c63ff'
   const workspaceKind = activeWorkspace?.kind ?? 'personal'
 
+  // Bottom nav: 4 most-used destinations + a "More" trigger that opens the
+  // full drawer. Order chosen to match thumb reach on mobile.
+  const BOTTOM_NAV: NavItem[] = [
+    { path: '/life', label: 'Today', icon: <Icon kind="sun" /> },
+    { path: '/life/todos', label: 'Todos', icon: <Icon kind="check" /> },
+    { path: '/life/projects', label: 'Projects', icon: <Icon kind="layers" /> },
+    { path: '/life/finance', label: 'Money', icon: <Icon kind="wallet" /> },
+  ]
+
+  const sidebarContent = (
+    <>
+      <div className="life-sidebar-header">
+        <span className="dot" />
+        <span>Life</span>
+        <button
+          className="life-drawer-close"
+          aria-label="Close menu"
+          onClick={() => setDrawerOpen(false)}
+        >
+          <Icon kind="close" />
+        </button>
+        <button className="back" onClick={() => navigate('/')}>← back</button>
+      </div>
+
+      <WorkspaceSwitcher />
+
+      <nav className="life-nav" aria-label="Life sections">
+        {NAV_GROUPS.map((group) => (
+          <div className="life-nav-group" key={group.id}>
+            <div className="life-nav-group-label">{group.label}</div>
+            {group.items.map((item) => {
+              const active =
+                item.path === '/life'
+                  ? location.pathname === '/life'
+                  : location.pathname.startsWith(item.path)
+              return (
+                <button
+                  key={item.path}
+                  className={active ? 'active' : ''}
+                  onClick={() => navigate(item.path)}
+                >
+                  {item.icon}
+                  <span>{item.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        ))}
+      </nav>
+
+      <div className="life-sidebar-footer">
+        {lifeUser && (
+          <>
+            <div>{lifeUser.display_name ?? lifeUser.username}</div>
+            <div>tz: {lifeUser.timezone}</div>
+            <div>EOD: {lifeUser.eod_hour}:00</div>
+          </>
+        )}
+      </div>
+    </>
+  )
+
   return (
     <div
-      className={`life-app life-ws-${workspaceKind}`}
+      className={`life-app life-ws-${workspaceKind}${drawerOpen ? ' drawer-open' : ''}`}
       style={{ ['--ws-accent' as string]: accent }}
     >
-      <aside className="life-sidebar">
-        <div className="life-sidebar-header">
-          <span className="dot" />
-          <span>Life</span>
-          <button className="back" onClick={() => navigate('/')}>← back</button>
-        </div>
-
-        <WorkspaceSwitcher />
-
-        <nav className="life-nav">
-          {NAV_GROUPS.map((group) => (
-            <div className="life-nav-group" key={group.id}>
-              <div className="life-nav-group-label">{group.label}</div>
-              {group.items.map((item) => {
-                const active =
-                  item.path === '/life'
-                    ? location.pathname === '/life'
-                    : location.pathname.startsWith(item.path)
-                return (
-                  <button
-                    key={item.path}
-                    className={active ? 'active' : ''}
-                    onClick={() => navigate(item.path)}
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                  </button>
-                )
-              })}
-            </div>
-          ))}
-        </nav>
-
-        <div className="life-sidebar-footer">
-          {lifeUser && (
-            <>
-              <div>{lifeUser.display_name ?? lifeUser.username}</div>
-              <div>tz: {lifeUser.timezone}</div>
-              <div>EOD: {lifeUser.eod_hour}:00</div>
-            </>
-          )}
-        </div>
+      {/* Desktop sidebar — hidden via CSS on mobile */}
+      <aside className="life-sidebar life-sidebar-desktop">
+        {sidebarContent}
       </aside>
+
+      {/* Mobile drawer — portal'd to body so it isn't clipped by main's
+          stacking context. Wrapped in `.life-app` so all the CSS variable
+          aliases (--text-muted, --hover, --ws-accent) still apply. */}
+      {createPortal(
+        <div
+          className={`life-app life-ws-${workspaceKind} life-portal-root`}
+          style={{ ['--ws-accent' as string]: accent }}
+        >
+          <div
+            className={`life-drawer-backdrop${drawerOpen ? ' open' : ''}`}
+            onClick={() => setDrawerOpen(false)}
+            aria-hidden="true"
+          />
+          <aside
+            className={`life-sidebar life-sidebar-mobile${drawerOpen ? ' open' : ''}`}
+            aria-hidden={!drawerOpen}
+            role="dialog"
+            aria-label="Navigation"
+          >
+            {sidebarContent}
+          </aside>
+        </div>,
+        document.body
+      )}
 
       <main className="life-main">
         <header className="life-topbar">
+          <button
+            className="life-hamburger"
+            aria-label="Open menu"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <Icon kind="menu" />
+          </button>
+
           <h1>{title}</h1>
-          {streak > 0 && mode?.streak !== 'paused' && (
-            <span className="life-streak-pill" title="Consecutive days with closed journal">
-              {streak}d
-            </span>
-          )}
-          {mode?.streak === 'paused' && (
-            <span
-              className="life-streak-pill paused"
-              title="Streak paused while in Recovery mode"
-            >
-              paused
-            </span>
-          )}
-          <ModeSwitcher />
-          {alignment && alignment.sample > 0 && (
-            <span
-              className={`life-align-pill ${alignment.rating}`}
-              title={`${alignment.sample} tasks in last ${alignment.windowDays}d traced to a quarterly goal`}
-            >
-              aligned {Math.round(alignment.rate * 100)}%
-            </span>
-          )}
+
+          <div className="life-topbar-pills">
+            {streak > 0 && mode?.streak !== 'paused' && (
+              <span className="life-streak-pill" title="Consecutive days with closed journal">
+                {streak}d
+              </span>
+            )}
+            {mode?.streak === 'paused' && (
+              <span
+                className="life-streak-pill paused"
+                title="Streak paused while in Recovery mode"
+              >
+                paused
+              </span>
+            )}
+            {alignment && alignment.sample > 0 && (
+              <span
+                className={`life-align-pill ${alignment.rating}`}
+                title={`${alignment.sample} tasks in last ${alignment.windowDays}d traced to a quarterly goal`}
+              >
+                aligned {Math.round(alignment.rate * 100)}%
+              </span>
+            )}
+          </div>
+
           <div className="spacer" />
-          {!notifGranted && (
-            <button className="life-btn" onClick={enableNotifications} title="Get EOD + task-due reminders">
-              🔔 Enable
+
+          {/* Desktop-only inline controls */}
+          <div className="life-topbar-desktop-actions">
+            <ModeSwitcher />
+            {!notifGranted && (
+              <button className="life-btn" onClick={enableNotifications} title="Get EOD + task-due reminders">
+                🔔 Enable
+              </button>
+            )}
+            <ThemeMenu />
+            <button className="life-btn" onClick={() => setEodOpen(true)}>
+              Close the day
             </button>
-          )}
-          <ThemeMenu />
-          <button className="life-btn" onClick={() => setEodOpen(true)}>
-            Close the day
-          </button>
-          <NotificationBell />
-          <button className="icon-btn" onClick={toggleAgent} title="Open Life copilot">
-            <Icon kind="sparkles" />
-          </button>
+            <NotificationBell />
+            <button className="icon-btn" onClick={toggleAgent} title="Open Life copilot">
+              <Icon kind="sparkles" />
+            </button>
+          </div>
+
+          {/* Mobile-only condensed controls */}
+          <div className="life-topbar-mobile-actions">
+            <button className="icon-btn" onClick={toggleAgent} aria-label="Open Life copilot">
+              <Icon kind="sparkles" />
+            </button>
+            <NotificationBell />
+            <div style={{ position: 'relative' }}>
+              <button
+                className="icon-btn"
+                onClick={() => setOverflowOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={overflowOpen}
+                aria-label="More actions"
+              >
+                <Icon kind="more" />
+              </button>
+              {overflowOpen && (
+                <>
+                  <div
+                    onClick={() => setOverflowOpen(false)}
+                    style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+                  />
+                  <div className="life-overflow-menu" role="menu">
+                    <button
+                      className="life-overflow-item"
+                      onClick={() => { setOverflowOpen(false); setEodOpen(true) }}
+                    >
+                      ✅ Close the day
+                    </button>
+                    {!notifGranted && (
+                      <button
+                        className="life-overflow-item"
+                        onClick={() => { setOverflowOpen(false); enableNotifications() }}
+                      >
+                        🔔 Enable notifications
+                      </button>
+                    )}
+                    <div className="life-overflow-divider" />
+                    <div className="life-overflow-section">
+                      <ModeSwitcher />
+                    </div>
+                    <div className="life-overflow-section">
+                      <ThemeMenu />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </header>
 
         <div className="life-content">{children}</div>
+
+        {/* Mobile bottom nav — hidden via CSS on desktop */}
+        <nav className="life-bottomnav" aria-label="Primary">
+          {BOTTOM_NAV.map((item) => {
+            const active =
+              item.path === '/life'
+                ? location.pathname === '/life'
+                : location.pathname.startsWith(item.path)
+            return (
+              <button
+                key={item.path}
+                className={active ? 'active' : ''}
+                onClick={() => navigate(item.path)}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
+          <button onClick={() => setDrawerOpen(true)} aria-label="More sections">
+            <Icon kind="grid" />
+            <span>More</span>
+          </button>
+        </nav>
       </main>
 
       <AgentDock />

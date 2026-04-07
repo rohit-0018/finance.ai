@@ -146,6 +146,8 @@
    * those popovers paint above the content area and the sidebar. */
   position: relative;
   z-index: 10;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .life-topbar h1 {
   font-size: 1.05rem;
@@ -1146,28 +1148,331 @@
 }
 .life-search:focus { border-color: var(--accent); }
 
-/* ── Mobile pass ──────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────────────
+ * Responsive layout system (Phase mobile-revamp)
+ *
+ * Strategy:
+ *  - Desktop (>= 901px): static left sidebar, full inline topbar, no
+ *    bottom nav, no drawer.
+ *  - Mobile  (<= 900px):  sidebar is hidden by default and exposed as a
+ *    portal'd drawer (slide-in from left). Topbar collapses to
+ *    hamburger + title + (sparkles, bell, overflow). A 5-tab bottom
+ *    nav replaces the sidebar for primary navigation; the drawer
+ *    exposes everything else.
+ *
+ * Both surfaces share the same `sidebarContent` JSX so there's only
+ * one source of truth for the nav.
+ * ──────────────────────────────────────────────────────────────────── */
 
-@media (max-width: 768px) {
-  .life-app { flex-direction: column; height: auto; min-height: 100vh; }
-  .life-sidebar {
-    width: 100%;
-    flex-direction: row;
-    overflow-x: auto;
-    padding: 10px;
-    gap: 8px;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
+/* Hamburger lives only on mobile */
+.life-hamburger {
+  display: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.life-hamburger:active { transform: scale(0.96); }
+.life-hamburger svg { width: 20px; height: 20px; }
+
+/* Drawer close button — hidden on desktop */
+.life-drawer-close {
+  display: none;
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.life-drawer-close svg { width: 16px; height: 16px; }
+
+/* Portal root for the drawer — neutralize the .life-app box so it doesn't
+ * intercept layout / clicks when the drawer is closed. */
+.life-portal-root {
+  display: contents;
+}
+
+/* Drawer sidebar (mobile) lives in body via portal — hidden on desktop */
+.life-sidebar-mobile { display: none; }
+
+/* Drawer backdrop */
+.life-drawer-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 9000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.life-drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Topbar groupings */
+.life-topbar-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.life-topbar-desktop-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.life-topbar-mobile-actions {
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Overflow menu (mobile topbar "more" popover) */
+.life-overflow-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 220px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.life-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.life-overflow-item:hover { background: var(--hover); }
+.life-overflow-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+.life-overflow-section {
+  padding: 4px 6px;
+}
+/* Inside the overflow menu, full-width children look better. */
+.life-overflow-section > * { width: 100%; }
+.life-overflow-section .life-btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* Bottom navigation — mobile only */
+.life-bottomnav {
+  display: none;
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  /* slight elevation so content scrolls under it */
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.06);
+}
+.life-bottomnav button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 52px;
+  background: none;
+  border: none;
+  color: var(--text-muted, #888);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  padding: 6px 4px;
+  border-radius: 10px;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s, background 0.15s;
+}
+.life-bottomnav button svg {
+  width: 20px;
+  height: 20px;
+}
+.life-bottomnav button:active { background: var(--hover); }
+.life-bottomnav button.active {
+  color: var(--accent);
+}
+.life-bottomnav button.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 26px;
+  height: 3px;
+  border-radius: 999px 999px 0 0;
+  background: var(--accent);
+}
+.life-bottomnav button { position: relative; }
+
+/* ── Tablet (<= 900px) ──────────────────────────────────────────── */
+@media (max-width: 900px) {
+  /* Hide static sidebar + show mobile shell */
+  .life-sidebar-desktop { display: none !important; }
+  .life-sidebar-mobile {
+    display: flex !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(86vw, 320px);
+    z-index: 9100;
+    transform: translateX(-105%);
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0.34, 1);
+    border-right: 1px solid var(--border);
+    box-shadow: 6px 0 32px rgba(0, 0, 0, 0.18);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
-  .life-sidebar-header { display: none; }
-  .life-nav { flex-direction: row; flex: 1; }
-  .life-nav button { padding: 8px 12px; font-size: 0.8rem; }
-  .life-nav button span { display: none; }
-  .life-sidebar-footer { display: none; }
-  .life-content { padding: 18px 16px; }
-  .life-topbar { padding: 12px 16px; }
-  .life-topbar h1 { font-size: 0.95rem; }
+  .life-sidebar-mobile.open { transform: translateX(0); }
+  .life-drawer-backdrop { display: block; }
+  .life-drawer-close { display: inline-flex; }
+  /* In mobile drawer, push the "back" button under the close button row. */
+  .life-sidebar-mobile .life-sidebar-header .back {
+    margin-left: 0;
+    flex-basis: 100%;
+    text-align: left;
+    padding-top: 8px;
+  }
+
+  /* Layout becomes single-column main */
+  .life-app {
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .life-main {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* Topbar — condensed */
+  .life-topbar {
+    padding: 10px 14px;
+    gap: 10px;
+    min-height: 56px;
+  }
+  .life-topbar h1 {
+    font-size: 1rem;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .life-hamburger { display: inline-flex; }
+  .life-topbar-desktop-actions { display: none; }
+  .life-topbar-mobile-actions { display: flex; }
+  .life-topbar-pills {
+    /* Pills are nice but space-constrained on mobile — only show streak. */
+    display: none;
+  }
+  .life-topbar .icon-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  /* Content scrolls inside main; bottom nav stays fixed at the bottom. */
+  .life-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 18px 16px 24px;
+  }
+
+  /* Bottom nav becomes visible */
+  .life-bottomnav {
+    display: flex;
+    align-items: stretch;
+  }
+
+  /* Wider agent dock to feel native */
   .life-agent-dock { width: 100vw; }
+}
+
+/* ── Phone (<= 560px) — extra trim ──────────────────────────────── */
+@media (max-width: 560px) {
+  .life-topbar { padding: 8px 12px; gap: 8px; }
+  .life-topbar h1 { font-size: 0.95rem; }
+  .life-content { padding: 14px 14px 20px; }
+  .life-card { padding: 14px 14px; border-radius: 12px; }
+  .life-section { margin-bottom: 22px; }
+  .life-fin-header { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .life-fin-kpi { padding: 12px 12px; }
+  .life-fin-kpi-value { font-size: 1.25rem; }
+  .life-fin-form-grid { grid-template-columns: 1fr; }
+  .life-fin-cat-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  .life-fin-filters { grid-template-columns: 1fr 1fr; }
+  .life-fin-recent-row,
+  .life-fin-table-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .life-fin-recent-title { white-space: normal; }
+  .life-fin-tabs { gap: 0; }
+  .life-fin-tab { padding: 10px 12px; font-size: 0.82rem; }
+  /* Touch targets */
+  .life-task-row { padding: 13px 14px; }
+  .life-btn { min-height: 38px; }
+}
+
+/* ── Tiny phone (<= 380px) — last-ditch sanity ──────────────────── */
+@media (max-width: 380px) {
+  .life-topbar h1 { font-size: 0.9rem; }
+  .life-bottomnav button { font-size: 0.62rem; }
+  .life-bottomnav button svg { width: 18px; height: 18px; }
+}
+
+/* ── Desktop sidebar polish ─────────────────────────────────────── */
+@media (min-width: 901px) {
+  .life-sidebar-desktop {
+    width: 232px;
+  }
+  .life-bottomnav { display: none !important; }
+  .life-hamburger { display: none !important; }
+  .life-topbar-mobile-actions { display: none !important; }
 }
 
 /* ── Loud LIFE_DB unconfigured banner ─────────────────────────────── */
@@ -1467,6 +1772,13 @@
   gap: 16px;
   height: calc(100vh - 180px);
   min-height: 500px;
+}
+@media (max-width: 900px) {
+  .life-brainstorm-grid {
+    height: auto;
+    min-height: 0;
+  }
+  .life-brainstorm-chat { min-height: 60vh; }
 }
 @media (min-width: 1000px) {
   .life-brainstorm-grid {
