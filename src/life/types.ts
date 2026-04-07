@@ -430,6 +430,44 @@ export interface LifeMemory {
   updated_at: string
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Finance
+// ──────────────────────────────────────────────────────────────────────
+export type FinanceKind = 'expense' | 'income'
+export type PaymentMethod = 'cash' | 'upi' | 'card' | 'bank' | 'other'
+
+export interface LifeFinanceCategory {
+  id: string
+  user_id: string
+  name: string
+  slug: string
+  kind: FinanceKind
+  color: string
+  icon: string
+  monthly_budget_cents: number
+  sort_order: number
+  archived: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface LifeFinanceTransaction {
+  id: string
+  user_id: string
+  workspace_id: string | null
+  category_id: string | null
+  amount_cents: number
+  currency: string
+  kind: FinanceKind
+  note: string | null
+  payment_method: PaymentMethod | null
+  occurred_at: string // ISO timestamp
+  tags: string[]
+  recurring: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface LifeIntegration {
   id: string
   user_id: string

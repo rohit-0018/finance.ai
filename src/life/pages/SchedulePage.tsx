@@ -20,9 +20,9 @@ import {
   listTasksInRangeAllWorkspaces,
   listTimeBlocksInRange,
   updateTask,
-  createTimeBlock,
   deleteTimeBlock,
 } from '../lib/db'
+import CalendarCreateModal from '../components/CalendarCreateModal'
 import type { LifeTask, LifeTimeBlock, LifeWorkspace } from '../types'
 
 const QUESTION_TAG = 'question'
@@ -151,6 +151,11 @@ const SchedulePage: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'work' | 'personal' | 'questions'>('all')
   const [loading, setLoading] = useState(false)
   const calendarRef = useRef<FullCalendar | null>(null)
+  const [createSelection, setCreateSelection] = useState<{
+    start: Date
+    end: Date
+    allDay: boolean
+  } | null>(null)
 
   // Re-load whenever the visible date range changes (FullCalendar fires
   // datesSet on mount, on view-change, on prev/next).
@@ -272,39 +277,12 @@ const SchedulePage: React.FC = () => {
     }
   }
 
-  // Drag-select an empty slot → create a focus time block.
-  const onSelect = async (arg: DateSelectArg) => {
-    if (!lifeUser) return
-    const label = window.prompt('Block label (e.g. Deep work, Standup, Gym):')
-    if (!label || !label.trim()) {
-      arg.view.calendar.unselect()
-      return
-    }
-    const date = arg.startStr.slice(0, 10)
-    const startMin = arg.start.getHours() * 60 + arg.start.getMinutes()
-    const endMin = arg.end.getHours() * 60 + arg.end.getMinutes()
-    try {
-      // If the selection lives in a single workspace context, file the block
-      // there. With "All" mode, fall back to personal.
-      const wsId =
-        activeWorkspace?.id ??
-        workspaces.find((w) => w.kind === 'personal')?.id ??
-        workspaces[0]?.id
-      await createTimeBlock({
-        userId: lifeUser.id,
-        workspaceId: wsId,
-        date,
-        start_minute: startMin,
-        end_minute: endMin,
-        label: label.trim(),
-        kind: 'deep',
-      })
-      load()
-    } catch (e) {
-      console.error(e)
-    } finally {
-      arg.view.calendar.unselect()
-    }
+  // Drag-select an empty slot → open the create modal. The user picks task
+  // vs focus block, recurrence, etc. Tasks land in life_tasks so they show
+  // up on the Todos page and are individually editable.
+  const onSelect = (arg: DateSelectArg) => {
+    setCreateSelection({ start: arg.start, end: arg.end, allDay: arg.allDay })
+    arg.view.calendar.unselect()
   }
 
   // Right-click a time block to delete it (FC has no native right-click,
@@ -412,6 +390,16 @@ const SchedulePage: React.FC = () => {
           eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
         />
       </div>
+
+      {createSelection && (
+        <CalendarCreateModal
+          start={createSelection.start}
+          end={createSelection.end}
+          allDay={createSelection.allDay}
+          onClose={() => setCreateSelection(null)}
+          onCreated={load}
+        />
+      )}
     </LifeLayout>
   )
 }

@@ -62,6 +62,8 @@ model life_users {
   capacity            life_capacity[]
   memory              life_memory[]
   integrations        life_integrations[]
+  finance_categories  life_finance_categories[]
+  finance_transactions life_finance_transactions[]
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -609,4 +611,54 @@ model life_integrations {
   user          life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, provider])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Finance — categories + transactions. Categories are user-owned but seeded
+// with sensible defaults the first time the finance tab is opened. Amounts are
+// stored as integers in the smallest currency unit (paise/cents) to avoid
+// floating-point drift in aggregations.
+// ──────────────────────────────────────────────────────────────────────────────
+model life_finance_categories {
+  id                   String                       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id              String                       @db.Uuid
+  name                 String
+  slug                 String                       // stable lowercase handle
+  kind                 String                       // "expense" | "income"
+  color                String                       @default("#6c63ff")
+  icon                 String                       @default("💸")
+  monthly_budget_cents Int                          @default(0)
+  sort_order           Int                          @default(0)
+  archived             Boolean                      @default(false)
+  created_at           DateTime                     @default(now()) @db.Timestamptz()
+  updated_at           DateTime                     @default(now()) @updatedAt @db.Timestamptz()
+
+  user                 life_users                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  transactions         life_finance_transactions[]
+
+  @@unique([user_id, slug])
+  @@index([user_id, kind])
+}
+
+model life_finance_transactions {
+  id             String                  @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id        String                  @db.Uuid
+  workspace_id   String?                 @db.Uuid                 // optional scoping (work vs personal)
+  category_id    String?                 @db.Uuid
+  amount_cents   Int                                              // expense > 0; sign carried by `kind`
+  currency       String                  @default("INR")
+  kind           String                                           // "expense" | "income"
+  note           String?
+  payment_method String?                                          // cash | upi | card | bank | other
+  occurred_at    DateTime                @db.Timestamptz()
+  tags           Json                    @default("[]")
+  recurring      Boolean                 @default(false)
+  created_at     DateTime                @default(now()) @db.Timestamptz()
+  updated_at     DateTime                @default(now()) @updatedAt @db.Timestamptz()
+
+  user           life_users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  category       life_finance_categories? @relation(fields: [category_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id, occurred_at])
+  @@index([user_id, category_id])
 }

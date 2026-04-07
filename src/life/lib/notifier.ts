@@ -37,6 +37,8 @@ interface SchedulerOpts {
   user: LifeUser
   todayTasks: () => LifeTask[]
   onEod: () => void
+  /** Optional — invoked when the daily finance log reminder fires (22:00). */
+  onFinanceLog?: () => void
 }
 
 /**
@@ -66,6 +68,18 @@ export function startReminderScheduler(opts: SchedulerOpts): () => void {
         'Close the day',
         'Two minutes — write today\'s journal so future you has the context.',
         opts.onEod
+      )
+    }
+
+    // Daily finance log nudge — fires at 22:00 local once per day. The user
+    // confirmed they want to log expenses around 10pm; this opens the page.
+    const finKey = `life_notify_finance_${dayKey}`
+    if (h >= 22 && !sessionStorage.getItem(finKey)) {
+      sessionStorage.setItem(finKey, '1')
+      fireBrowserNotification(
+        'Log today\'s expenses',
+        'Daily 10pm check-in — what did you spend today?',
+        opts.onFinanceLog
       )
     }
 

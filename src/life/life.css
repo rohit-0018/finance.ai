@@ -1,12 +1,24 @@
 /* Life app styles — scoped under .life-app so they don't bleed into papermind */
 
+/* Theme bridge — papermind defines its palette via [data-theme] on <html>
+ * (--bg, --bg2/3/4, --text, --text2/3, --accent, --border, etc). Life was
+ * authored against an older naming convention (--text-muted, --hover) so we
+ * alias the missing names here. This way switching the papermind theme
+ * automatically reflects across the Life dashboard, no extra wiring needed.
+ */
+.life-app {
+  --text-muted: var(--text2, #888);
+  --hover: var(--bg3, rgba(127, 127, 127, 0.08));
+  --border-strong: var(--border2, var(--border));
+}
+
 .life-app {
   display: flex;
   height: 100vh;
   width: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--body, 'Inter', sans-serif);
 }
 
 /* ── Internal sidebar ─────────────────────────────────────────────── */
@@ -562,6 +574,302 @@
 .life-pulse-row p { margin: 0; font-size: 0.88rem; line-height: 1.5; }
 
 /* ── Schedule (day timeline) ──────────────────────────────────────── */
+
+/* ── Finance ──────────────────────────────────────────────────────── */
+
+.life-fin-header {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 18px;
+}
+@media (max-width: 900px) {
+  .life-fin-header { grid-template-columns: repeat(2, 1fr); }
+}
+
+.life-fin-kpi {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.life-fin-kpi-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.life-fin-kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-top: 4px;
+  letter-spacing: -0.02em;
+}
+
+.life-fin-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+.life-fin-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.life-fin-tab:hover { color: var(--text); }
+.life-fin-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.life-fin-h3 {
+  font-size: 0.86rem;
+  font-weight: 650;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+
+/* Log tab */
+.life-fin-log {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  margin-bottom: 24px;
+}
+.life-fin-log-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.life-fin-kind-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.life-fin-kind-toggle button {
+  padding: 9px 16px;
+  background: var(--bg);
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.life-fin-kind-toggle button.active.expense { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+.life-fin-kind-toggle button.active.income { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+
+.life-fin-amount-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 14px;
+}
+.life-fin-currency { font-size: 1.6rem; color: var(--text-muted); }
+.life-fin-amount-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-family: inherit;
+}
+.life-fin-amount-input::-webkit-outer-spin-button,
+.life-fin-amount-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.life-fin-amount-input { -moz-appearance: textfield; }
+
+.life-fin-section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.life-fin-cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.life-fin-cat-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text);
+  transition: all 0.15s;
+  position: relative;
+}
+.life-fin-cat-pill:hover {
+  border-color: var(--cat-color, var(--accent));
+  transform: translateY(-1px);
+}
+.life-fin-cat-pill.active {
+  background: color-mix(in srgb, var(--cat-color) 18%, transparent);
+  border-color: var(--cat-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cat-color) 30%, transparent);
+}
+.life-fin-cat-pill .cat-icon { font-size: 1.4rem; }
+.life-fin-cat-pill .cat-name { font-size: 0.74rem; font-weight: 500; text-align: center; }
+
+.life-fin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.life-fin-label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.life-fin-input {
+  width: 100%;
+  padding: 9px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+.life-fin-input:focus { border-color: var(--accent); }
+
+.life-fin-save {
+  width: 100%;
+  padding: 12px;
+  font-size: 0.95rem;
+}
+
+/* Recent + table */
+.life-fin-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.life-fin-recent-row,
+.life-fin-table-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.life-fin-recent-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.life-fin-recent-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.life-fin-recent-note { font-size: 0.74rem; color: var(--text-muted); }
+
+.life-fin-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.life-fin-filters {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.4fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+@media (max-width: 900px) {
+  .life-fin-filters { grid-template-columns: 1fr 1fr; }
+}
+
+.life-fin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+@media (max-width: 900px) {
+  .life-fin-grid { grid-template-columns: 1fr; }
+  .life-fin-grid > * { grid-column: span 1 !important; }
+}
+
+.life-fin-chart-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.life-fin-big {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 4px 0 6px;
+}
+
+.life-fin-budget-list { display: flex; flex-direction: column; gap: 10px; }
+.life-fin-budget-row {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.life-fin-progress {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.life-fin-progress-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
 
 /* ── FullCalendar theming ─────────────────────────────────────────── */
 

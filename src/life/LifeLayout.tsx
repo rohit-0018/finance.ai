@@ -52,6 +52,13 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: 'money',
+    label: 'Money',
+    items: [
+      { path: '/life/finance', label: 'Finance', icon: <Icon kind="wallet" /> },
+    ],
+  },
+  {
     id: 'reflect',
     label: 'Reflect',
     items: [
@@ -101,6 +108,8 @@ function Icon({ kind }: { kind: string }) {
       return (<svg {...p}><polyline points="20 6 9 17 4 12" /></svg>)
     case 'question':
       return (<svg {...p}><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>)
+    case 'wallet':
+      return (<svg {...p}><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4z" /></svg>)
     default:
       return null
   }
@@ -245,6 +254,7 @@ const LifeLayout: React.FC<LifeLayoutProps> = ({ title, children }) => {
       user: lifeUser,
       todayTasks: () => todayTasksRef.current,
       onEod: () => setEodOpen(true),
+      onFinanceLog: () => navigate('/life/finance'),
     })
 
     return () => {
@@ -381,6 +391,7 @@ LIFE_DATABASE_URL=postgresql://...`}
               🔔 Enable
             </button>
           )}
+          <ThemeMenu />
           <button className="life-btn" onClick={() => setEodOpen(true)}>
             Close the day
           </button>
@@ -395,6 +406,90 @@ LIFE_DATABASE_URL=postgresql://...`}
 
       <AgentDock />
       {eodOpen && <EodModal onClose={() => setEodOpen(false)} />}
+    </div>
+  )
+}
+
+// Lightweight theme picker — reuses the papermind store so changes also apply
+// to the rest of the app. Themes share CSS variables on <html data-theme="…">
+// which the .life-app aliases pick up automatically.
+const THEMES: Array<{ id: 'light' | 'dark' | 'sepia' | 'midnight' | 'forest'; label: string; emoji: string }> = [
+  { id: 'light', label: 'Light', emoji: '☀️' },
+  { id: 'dark', label: 'Dark', emoji: '🌙' },
+  { id: 'sepia', label: 'Sepia', emoji: '📜' },
+  { id: 'midnight', label: 'Midnight', emoji: '🌌' },
+  { id: 'forest', label: 'Forest', emoji: '🌲' },
+]
+
+const ThemeMenu: React.FC = () => {
+  const theme = useAppStore((s) => s.theme)
+  const setTheme = useAppStore((s) => s.setTheme)
+  const [open, setOpen] = useState(false)
+  const current = THEMES.find((t) => t.id === theme) ?? THEMES[0]
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        className="life-btn"
+        onClick={() => setOpen((v) => !v)}
+        title="Theme"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        {current.emoji} {current.label}
+      </button>
+      {open && (
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 999 }}
+          />
+          <div
+            role="menu"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: '110%',
+              minWidth: 160,
+              background: 'var(--bg)',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              padding: 4,
+              boxShadow: 'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
+              zIndex: 1000,
+            }}
+          >
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                role="menuitemradio"
+                aria-checked={t.id === theme}
+                onClick={() => {
+                  setTheme(t.id)
+                  setOpen(false)
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  width: '100%',
+                  padding: '8px 12px',
+                  background: t.id === theme ? 'var(--accent-light, var(--bg3))' : 'none',
+                  border: 'none',
+                  borderRadius: 6,
+                  color: 'var(--text)',
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <span>{t.emoji}</span>
+                <span>{t.label}</span>
+                {t.id === theme && <span style={{ marginLeft: 'auto', color: 'var(--accent)' }}>✓</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
