@@ -1,6 +1,5 @@
 import { lifeDb } from './_client'
 import { resolveDefaultWorkspaceId } from './_defaults'
-import { todayLocal } from '../time'
 import type { LifeTask, TaskStatus, TaskAutomation, TaskSource } from '../../types'
 
 export async function listTasksForDate(
@@ -111,7 +110,10 @@ export async function createTask(input: {
       project_id: input.project_id ?? null,
       goal_id: input.goal_id ?? null,
       parent_task_id: input.parent_task_id ?? null,
-      scheduled_for: input.scheduled_for ?? todayLocal(),
+      // Stay undated unless caller explicitly provides a date — otherwise
+      // every task without a start date silently lands on Today and
+      // clutters the dashboard.
+      scheduled_for: input.scheduled_for ?? null,
       start_at: input.start_at ?? null,
       due_at: input.due_at ?? null,
       estimate_min: input.estimate_min ?? null,

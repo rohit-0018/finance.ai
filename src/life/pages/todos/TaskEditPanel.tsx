@@ -252,17 +252,56 @@ const TaskEditPanel: React.FC<TaskEditPanelProps> = ({
   }
 
   const setPriority = (p: number) => persist({ priority: p })
-  const setScheduledFor = (date: string | null) => persist({ scheduled_for: date })
   const setEstimate = (min: number | null) => persist({ estimate_min: min })
   const setStartAt = (iso: string | null) => persist({ start_at: iso })
   const setDueAt = (iso: string | null) => persist({ due_at: iso })
 
+  // When the user reschedules a task, we have to move ALL of its date
+  // anchors — not just `scheduled_for`. Previously only the date pill was
+  // updated, so a task with a `start_at` of 2026-04-01 09:00 stayed pinned
+  // there even after pressing "Tomorrow", which is what made the calendar
+  // and Today views ignore the reschedule. The fix: shift `start_at` /
+  // `due_at` to the new date while preserving the original wall-clock time
+  // (and the original start→due gap).
+  //
+  // `newDateLocal` is YYYY-MM-DD in the user's timezone — we splice that
+  // into the existing ISO string by pulling the time component out of the
+  // current value and constructing a fresh local Date.
+  const shiftIsoToDate = (iso: string | null | undefined, newDateLocal: string): string | null => {
+    if (!iso) return iso ?? null
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    const ss = String(d.getSeconds()).padStart(2, '0')
+    return new Date(`${newDateLocal}T${hh}:${mm}:${ss}`).toISOString()
+  }
+
+  // Build a patch that moves every date anchor on the task to `newDate`
+  // (a YYYY-MM-DD local date). Pass null to clear them all.
+  const buildRescheduleP = (newDate: string | null): Partial<LifeTask> => {
+    if (newDate === null) {
+      return { scheduled_for: null, start_at: null, due_at: null }
+    }
+    return {
+      scheduled_for: newDate,
+      start_at: task.start_at ? shiftIsoToDate(task.start_at, newDate) : null,
+      due_at: task.due_at ? shiftIsoToDate(task.due_at, newDate) : null,
+    }
+  }
+
+  // Manual date picker — must move start_at/due_at along with the date.
+  const setScheduledFor = (date: string | null) => persist(buildRescheduleP(date))
+
   const reschedule = (preset: 'today' | 'tomorrow' | 'next-week' | 'clear') => {
-    if (preset === 'clear') return setScheduledFor(null)
+    if (preset === 'clear') return persist(buildRescheduleP(null))
     const d = new Date(`${todayLocalDate}T00:00:00`)
     if (preset === 'tomorrow') d.setDate(d.getDate() + 1)
     if (preset === 'next-week') d.setDate(d.getDate() + 7)
-    setScheduledFor(d.toISOString().slice(0, 10))
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    persist(buildRescheduleP(`${yyyy}-${mm}-${dd}`))
   }
 
   // ── Tags ─────────────────────────────────────────────────────────

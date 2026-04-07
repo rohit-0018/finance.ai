@@ -263,6 +263,19 @@ const TodosPage: React.FC = () => {
     activeWorkspace?.id,
   ])
 
+  // Questions live in life_tasks too (tagged `question`). They should only
+  // appear in the Todos pane when the user has explicitly promoted them via
+  // the "Add to todos" button on the Questions page (which adds the `todo`
+  // tag). Without this filter, every captured question would clutter the
+  // backlog.
+  const filterQuestionRows = useCallback((rs: LifeTask[]) => {
+    return rs.filter((t) => {
+      const tags = Array.isArray(t.tags) ? t.tags : []
+      if (!tags.includes('question')) return true
+      return tags.includes('todo')
+    })
+  }, [])
+
   // Initial / filter-change load
   const load = useCallback(async () => {
     if (!lifeUser) return
@@ -273,7 +286,7 @@ const TodosPage: React.FC = () => {
         offset: 0,
         limit: PAGE_SIZE,
       })
-      setRows(page.rows)
+      setRows(filterQuestionRows(page.rows))
       setTotal(page.total)
       setHasMore(page.hasMore)
       // Reset scroll position on a fresh query.
@@ -357,7 +370,7 @@ const TodosPage: React.FC = () => {
         offset: rows.length,
         limit: PAGE_SIZE,
       })
-      setRows((r) => [...r, ...page.rows])
+      setRows((r) => [...r, ...filterQuestionRows(page.rows)])
       setHasMore(page.hasMore)
       setTotal(page.total)
     } catch (err) {
@@ -546,11 +559,14 @@ const TodosPage: React.FC = () => {
     const title = quickTitle.trim()
     setError(null)
     try {
+      // Leave undated by default — the user can pick a date via the inline
+      // date pill on the new row. Forcing today here meant every quick-add
+      // silently landed on the Today dashboard and cluttered it.
       await createTask({
         userId: lifeUser.id,
         workspaceId: activeWorkspace.id,
         title,
-        scheduled_for: today,
+        scheduled_for: null,
         source: 'manual',
       })
       // Only clear AFTER the write lands. Refresh list.

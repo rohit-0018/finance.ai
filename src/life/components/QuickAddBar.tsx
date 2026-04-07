@@ -20,7 +20,9 @@ interface ParseResult {
 //   "Read Anthropic docs !2 #learn"
 function parseInput(raw: string): ParseResult {
   let s = raw.trim()
-  let scheduled_for: string | null = todayLocal()
+  // Stay undated unless the user actually says "today"/"tomorrow". Defaulting
+  // to today silently dumped every quick-add into the Today dashboard.
+  let scheduled_for: string | null = null
   let priority = 3
   const tags: string[] = []
   let recurrence: RecurrencePreset = 'none'
