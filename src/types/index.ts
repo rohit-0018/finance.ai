@@ -78,19 +78,49 @@ export interface RSSFeed {
   created_at: string
 }
 
+export type ArticleType =
+  | 'research'
+  | 'tutorial'
+  | 'news'
+  | 'opinion'
+  | 'product'
+  | 'guide'
+  | 'analysis'
+  | 'story'
+  | 'other'
+
 export interface DeepAnalysis {
-  hook: string
-  coreProblem: string
-  proposedSolution: string
-  evidence: string
-  implications: string
-  limitations: string
-  fieldContext: string
-  tldr: string
-  noveltySignals: string[]
-  hedgingSignals: string[]
-  cherryPickRisks: string[]
+  // Universal (always present after deep extract)
+  articleType?: ArticleType
+  hook?: string
+  tldr?: string
+  longSummary?: string          // 6-10 paragraph comprehensive cream-of-the-article
+  keyPoints?: string[]          // 8-15 bullet "every important idea" points
+  takeaways?: string[]          // actionable so-what bullets
+  keyNumbers?: string[]         // notable stats/figures with context
+  quotes?: string[]             // notable direct quotes from article
+  glossary?: Array<{ term: string; definition: string }>
+
+  // Research-paper specific (only when applicable)
+  coreProblem?: string
+  proposedSolution?: string
+  evidence?: string
+  implications?: string
+  limitations?: string
+  fieldContext?: string
+
+  // Critical signals
+  noveltySignals?: string[]
+  hedgingSignals?: string[]
+  cherryPickRisks?: string[]
   readingMode?: 'researcher' | 'practitioner' | 'layperson'
+}
+
+export interface Uploader {
+  id: string
+  display_name: string | null
+  username: string
+  is_admin: boolean
 }
 
 export interface Article {
@@ -106,6 +136,7 @@ export interface Article {
   is_private: boolean
   approved: boolean
   created_at: string
+  uploader?: Uploader | null
 }
 
 export interface UserTopic {

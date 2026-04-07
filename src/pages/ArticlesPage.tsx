@@ -2,7 +2,8 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
 import { dbGetArticles, dbSaveArticle, dbDeleteArticle } from '../lib/supabase'
-import { summarizeArticle } from '../lib/anthropic'
+import { deepExtractArticle } from '../lib/anthropic'
+import { UploaderBadge } from '../components/Avatar'
 import type { Article, DeepAnalysis } from '../types'
 import { formatRelative, truncate } from '../lib/utils'
 import TagPill from '../components/TagPill'
@@ -47,7 +48,7 @@ async function fetchPageContent(url: string): Promise<{ title: string; content: 
       if (content.length < 100) content = doc.body?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
       if (content.length < 100) { errors.push(`${proxyName}: content too short`); continue }
 
-      return { title, content: content.slice(0, 15000) }
+      return { title, content: content.slice(0, 60000) }
     } catch (err) {
       errors.push(`${proxyName}: ${err instanceof Error ? err.message : 'error'}`)
     }
@@ -89,17 +90,21 @@ const ArticlesPage: React.FC = () => {
 
     for (const url of urlList) {
       try {
-        setProgress(`Extracting: ${new URL(url).hostname}`)
+        setProgress(`Fetching: ${new URL(url).hostname}`)
         const { title, content } = await fetchPageContent(url)
-        setProgress(`Analyzing: ${title.slice(0, 40)}...`)
-        const analysis = await summarizeArticle(title, content)
+        // Deep multi-phase extraction BEFORE saving — nothing hits the DB
+        // until we have the full distilled output.
+        const extracted = await deepExtractArticle(title, content, (step) =>
+          setProgress(`${title.slice(0, 30)}... — ${step}`)
+        )
         const article = await dbSaveArticle({
           url,
           title,
           content,
-          summary: analysis.summary,
-          topic: analysis.topic,
-          tags: analysis.tags,
+          summary: extracted.summary,
+          topic: extracted.topic,
+          tags: extracted.tags,
+          analysis: extracted.analysis,
           addedBy: userId,
           isPrivate: makePrivate,
           // Admins auto-approve their public articles. Regular users wait.
@@ -291,6 +296,13 @@ const ArticleCard: React.FC<{
           <TagPill key={tag} label={tag} />
         ))}
       </div>
+
+      {/* Uploader chip (hidden if uploaded by admin) */}
+      {article.uploader && !article.uploader.is_admin && (
+        <div style={{ marginTop: 8 }}>
+          <UploaderBadge uploader={article.uploader} compact />
+        </div>
+      )}
 
       {/* Bottom bar */}
       <div className="al-card-bottom" onClick={(e) => e.stopPropagation()}>

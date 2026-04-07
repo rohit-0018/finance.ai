@@ -226,6 +226,248 @@ Return ONLY the JSON object, no other text.`,
   return JSON.parse(jsonStr) as { summary: string; topic: string; tags: string[] }
 }
 
+// ---------- Deep Article Extraction (multi-phase, lossless) ----------
+//
+// Goal: a niche extractor that gives the *cream* of any article — research paper,
+// blog post, tutorial, news, opinion — in plain language without losing critical
+// information. Adapts sections to the article type. Run BEFORE saving to DB so
+// the article is born already-analyzed.
+
+import type { DeepAnalysis as _DA, ArticleType } from '../types'
+
+function chunkText(text: string, size = 6000, overlap = 400): string[] {
+  if (text.length <= size) return [text]
+  const chunks: string[] = []
+  let i = 0
+  while (i < text.length) {
+    chunks.push(text.slice(i, i + size))
+    i += size - overlap
+  }
+  return chunks
+}
+
+interface ChunkFacts {
+  facts: string[]
+  arguments: string[]
+  numbers: string[]
+  quotes: string[]
+  entities: string[]
+}
+
+async function extractChunkFacts(
+  title: string,
+  chunk: string,
+  idx: number,
+  total: number
+): Promise<ChunkFacts> {
+  const text = await callOpenAI({
+    max_tokens: 2500,
+    system: `You are a precise information extractor. Your job is to lose ZERO important information from this chunk. Extract everything that matters — facts, claims, arguments, numbers, names, quotes. Do NOT summarize. Do NOT skip details. If a sentence contains an idea, capture it. Be exhaustive.`,
+    messages: [{
+      role: 'user',
+      content: `Article: "${title}" — chunk ${idx + 1}/${total}.
+
+Extract a JSON object:
+{
+  "facts": [exhaustive list of every distinct factual statement, claim, idea, definition, or finding in this chunk — short complete sentences in plain language],
+  "arguments": [each line of reasoning, opinion, or argument the author makes],
+  "numbers": [every statistic, figure, percentage, dollar amount, date, or quantitative result with its context],
+  "quotes": [direct quotes worth preserving verbatim — sentences that lose meaning if paraphrased],
+  "entities": [people, companies, products, papers, tools, places mentioned]
+}
+
+Be EXHAUSTIVE. A long chunk should yield many items. It is far worse to drop information than to over-include.
+
+CHUNK:
+"""${chunk}"""
+
+Return ONLY the JSON.`,
+    }],
+  })
+  try {
+    const parsed = JSON.parse(extractJSON(text))
+    return {
+      facts: parsed.facts ?? [],
+      arguments: parsed.arguments ?? [],
+      numbers: parsed.numbers ?? [],
+      quotes: parsed.quotes ?? [],
+      entities: parsed.entities ?? [],
+    }
+  } catch {
+    return { facts: [], arguments: [], numbers: [], quotes: [], entities: [] }
+  }
+}
+
+async function classifyArticle(title: string, sample: string): Promise<{
+  articleType: ArticleType
+  topic: string
+  tags: string[]
+}> {
+  const text = await callOpenAI({
+    max_tokens: 400,
+    messages: [{
+      role: 'user',
+      content: `Classify this article. Return JSON:
+{
+  "articleType": one of "research" | "tutorial" | "news" | "opinion" | "product" | "guide" | "analysis" | "story" | "other",
+  "topic": short topic category (e.g. "AI", "Web Development", "Finance", "Politics"),
+  "tags": 3-6 keyword tags
+}
+
+Title: "${title}"
+Excerpt: "${sample.slice(0, 2000)}"
+
+Return ONLY JSON.`,
+    }],
+  })
+  try {
+    return JSON.parse(extractJSON(text))
+  } catch {
+    return { articleType: 'other' as ArticleType, topic: 'General', tags: [] }
+  }
+}
+
+export async function deepExtractArticle(
+  title: string,
+  content: string,
+  onProgress?: (step: string) => void
+): Promise<{
+  summary: string
+  topic: string
+  tags: string[]
+  analysis: _DA
+}> {
+  // Phase 1: classify
+  onProgress?.('Phase 1/4: Classifying article...')
+  const cls = await classifyArticle(title, content)
+
+  // Phase 2: chunked exhaustive extraction
+  const chunks = chunkText(content, 6000, 400)
+  onProgress?.(`Phase 2/4: Extracting facts (${chunks.length} chunk${chunks.length > 1 ? 's' : ''})...`)
+  const allFacts: ChunkFacts = { facts: [], arguments: [], numbers: [], quotes: [], entities: [] }
+  for (let i = 0; i < chunks.length; i++) {
+    onProgress?.(`Phase 2/4: Extracting chunk ${i + 1}/${chunks.length}...`)
+    const cf = await extractChunkFacts(title, chunks[i], i, chunks.length)
+    allFacts.facts.push(...cf.facts)
+    allFacts.arguments.push(...cf.arguments)
+    allFacts.numbers.push(...cf.numbers)
+    allFacts.quotes.push(...cf.quotes)
+    allFacts.entities.push(...cf.entities)
+  }
+
+  // Phase 3: synthesize universal sections from merged facts
+  onProgress?.('Phase 3/4: Synthesizing the cream...')
+  const factsBlock = [
+    `FACTS (${allFacts.facts.length}):\n` + allFacts.facts.map((f) => `- ${f}`).join('\n'),
+    `ARGUMENTS (${allFacts.arguments.length}):\n` + allFacts.arguments.map((a) => `- ${a}`).join('\n'),
+    `NUMBERS (${allFacts.numbers.length}):\n` + allFacts.numbers.map((n) => `- ${n}`).join('\n'),
+    `QUOTES (${allFacts.quotes.length}):\n` + allFacts.quotes.map((q) => `- ${q}`).join('\n'),
+  ].join('\n\n').slice(0, 18000)
+
+  const synth = await callOpenAI({
+    max_tokens: 4000,
+    system: `You are a master extractor. You distill articles into their cream — the essence in plain, simple language — WITHOUT losing a single critical idea. The reader trusts you to do the reading for them. Be exhaustive on substance, ruthless on filler. Use **bold** for key terms.`,
+    messages: [{
+      role: 'user',
+      content: `You are given an exhaustive extraction of facts from the article "${title}" (type: ${cls.articleType}).
+
+Your job: produce the definitive distilled output. Plain simple language. No academic jargon. No filler. Cover EVERY meaningful idea from the facts below — if you skip something important, you have failed.
+
+EXTRACTED MATERIAL:
+${factsBlock}
+
+Return a JSON object with these fields:
+{
+  "hook": "1-2 sentence opener — why this article exists, why it matters. Make the reader want to read on.",
+  "tldr": "Exactly 3 sentences. The whole article boiled to its essence.",
+  "longSummary": "6-10 short paragraphs in plain language covering EVERY important idea, finding, argument, and nuance from the article. This is the main deliverable — a reader who only reads this should understand the article completely. No bullets, flowing prose. Use **bold** for key terms.",
+  "keyPoints": [10-18 short bullet points — each a single distinct idea from the article. Cover every important point. Order roughly as they appear in the article.],
+  "takeaways": [3-7 actionable so-what bullets — what should the reader do, believe, or watch for as a result of reading this?],
+  "keyNumbers": [every notable statistic with one-line context — keep all of them],
+  "quotes": [3-8 of the most striking direct quotes worth preserving verbatim]
+}
+
+Return ONLY the JSON object.`,
+    }],
+  })
+
+  let universal: {
+    hook: string
+    tldr: string
+    longSummary: string
+    keyPoints: string[]
+    takeaways: string[]
+    keyNumbers: string[]
+    quotes: string[]
+  }
+  try {
+    universal = JSON.parse(extractJSON(synth))
+  } catch {
+    throw new Error('Synthesis phase failed: could not parse JSON')
+  }
+
+  // Phase 4: research-only extras (skip for non-research)
+  let researchExtras: Partial<_DA> = {}
+  if (cls.articleType === 'research') {
+    onProgress?.('Phase 4/4: Research-paper deep dive...')
+    const rs = await callOpenAI({
+      max_tokens: 2500,
+      system: `You add research-paper specific structure. Plain language. Lose no critical detail.`,
+      messages: [{
+        role: 'user',
+        content: `Research paper: "${title}". Based on these extracted facts:
+
+${factsBlock.slice(0, 12000)}
+
+Return JSON:
+{
+  "coreProblem": "2-4 sentences — the specific problem this paper addresses and why prior work was insufficient",
+  "proposedSolution": "2-4 sentences — the key idea/method in plain language with an analogy if helpful",
+  "evidence": "2-4 sentences — concrete results, numbers, baselines",
+  "implications": "2-4 sentences — who benefits, what changes in practice",
+  "limitations": "2-4 sentences — combined author limitations + what a careful reader should worry about",
+  "fieldContext": "2-3 sentences — where this sits in the field, what it builds on, what it contradicts",
+  "noveltySignals": [exact phrases the authors use to claim novelty],
+  "hedgingSignals": [exact phrases showing caution],
+  "cherryPickRisks": [methodology concerns a careful reader should watch for]
+}
+
+Return ONLY JSON.`,
+      }],
+    })
+    try {
+      researchExtras = JSON.parse(extractJSON(rs))
+    } catch {
+      // non-fatal
+    }
+  }
+
+  onProgress?.('Done!')
+
+  const analysis: _DA = {
+    articleType: cls.articleType,
+    hook: universal.hook,
+    tldr: universal.tldr,
+    longSummary: universal.longSummary,
+    keyPoints: universal.keyPoints ?? [],
+    takeaways: universal.takeaways ?? [],
+    keyNumbers: universal.keyNumbers ?? [],
+    quotes: universal.quotes ?? [],
+    ...researchExtras,
+    noveltySignals: researchExtras.noveltySignals ?? [],
+    hedgingSignals: researchExtras.hedgingSignals ?? [],
+    cherryPickRisks: researchExtras.cherryPickRisks ?? [],
+  }
+
+  // Use longSummary as the persisted `summary` field — no more 2-3 sentence bullshit.
+  return {
+    summary: universal.longSummary,
+    topic: cls.topic,
+    tags: cls.tags,
+    analysis,
+  }
+}
+
 export async function generateDailyBrief(
   topics: string[],
   recentPapers: Array<{ title: string; finding: string | null; topic: string; problem: string | null; method: string | null; abstract: string | null }>,

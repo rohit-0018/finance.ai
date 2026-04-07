@@ -1,30 +1,35 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { dbGetArticle, dbUpdateArticleAnalysis } from '../lib/supabase'
-import { generateDeepAnalysis, articleChat } from '../lib/anthropic'
+import { deepExtractArticle, articleChat } from '../lib/anthropic'
 import { useAppStore } from '../store'
 import type { Article, DeepAnalysis } from '../types'
 import TagPill from '../components/TagPill'
+import { UploaderBadge } from '../components/Avatar'
 import { formatRelative } from '../lib/utils'
 import toast from 'react-hot-toast'
 
 type ReadingMode = 'researcher' | 'practitioner' | 'layperson'
 
+type SectionKey =
+  | 'tldr' | 'longSummary' | 'coreProblem' | 'proposedSolution'
+  | 'evidence' | 'implications' | 'limitations' | 'fieldContext'
+
 const SECTION_META: Array<{
-  key: keyof Omit<DeepAnalysis, 'noveltySignals' | 'hedgingSignals' | 'cherryPickRisks' | 'readingMode'>
+  key: SectionKey
   label: string
   icon: string
   color: string
   drillPrompt: string
 }> = [
-  { key: 'hook', label: 'The Hook', icon: '⚡', color: 'var(--amber)', drillPrompt: 'Tell me more about the historical context and what prompted this research' },
+  { key: 'tldr', label: 'TL;DR', icon: '📋', color: 'var(--text2)', drillPrompt: '' },
+  { key: 'longSummary', label: 'The Cream', icon: '🥛', color: 'var(--accent)', drillPrompt: 'Go even deeper on the most important parts of this article' },
   { key: 'coreProblem', label: 'Core Problem', icon: '🎯', color: 'var(--coral)', drillPrompt: 'Explain the core problem in more detail. What are the technical specifics?' },
   { key: 'proposedSolution', label: 'The Solution', icon: '💡', color: 'var(--accent)', drillPrompt: 'Break down the solution step by step. How does it actually work?' },
   { key: 'evidence', label: 'Evidence', icon: '📊', color: 'var(--green)', drillPrompt: 'Analyze the evidence more critically. Are these results convincing?' },
   { key: 'implications', label: 'Real-World Impact', icon: '🌍', color: 'var(--teal)', drillPrompt: 'Give me more concrete examples of who benefits and how' },
   { key: 'limitations', label: 'Honest Limitations', icon: '⚠️', color: 'var(--amber)', drillPrompt: 'What are the deepest concerns with this work?' },
   { key: 'fieldContext', label: 'Where It Fits', icon: '🗺️', color: 'var(--accent)', drillPrompt: 'Map this against the most important related work in the field' },
-  { key: 'tldr', label: 'TL;DR', icon: '📋', color: 'var(--text2)', drillPrompt: '' },
 ]
 
 const ArticleReaderPage: React.FC = () => {
@@ -68,9 +73,9 @@ const ArticleReaderPage: React.FC = () => {
     if (!article) return
     setAnalyzing(true)
     try {
-      const analysis = await generateDeepAnalysis(article.title, article.content, mode, setProgress)
-      await dbUpdateArticleAnalysis(article.id, analysis)
-      setArticle({ ...article, analysis })
+      const result = await deepExtractArticle(article.title, article.content, setProgress)
+      await dbUpdateArticleAnalysis(article.id, result.analysis, result.summary)
+      setArticle({ ...article, analysis: result.analysis, summary: result.summary })
       toast.success('Deep analysis complete!')
     } catch (err) {
       console.error('Analysis failed:', err)
@@ -141,7 +146,18 @@ const ArticleReaderPage: React.FC = () => {
             <span style={{ fontSize: '0.78rem', color: 'var(--text3)' }}>{formatRelative(article.created_at)}</span>
           </div>
           <h1 className="ar-title">{article.title}</h1>
-          {article.summary && <p className="ar-summary">{article.summary}</p>}
+          {article.uploader && !article.uploader.is_admin && (
+            <div style={{ marginTop: 10 }}>
+              <UploaderBadge uploader={article.uploader} size={28} />
+            </div>
+          )}
+          {analysis?.hook && (
+            <p className="ar-summary" style={{ fontStyle: 'italic', opacity: 0.92 }}
+               dangerouslySetInnerHTML={{ __html: formatSection(analysis.hook) }} />
+          )}
+          {!analysis?.hook && article.summary && (
+            <p className="ar-summary">{article.summary.slice(0, 400)}{article.summary.length > 400 ? '…' : ''}</p>
+          )}
         </div>
 
         {/* Analysis controls */}
@@ -216,38 +232,100 @@ const ArticleReaderPage: React.FC = () => {
               )
             })}
 
+            {/* Key Points — every important idea, ordered */}
+            {analysis.keyPoints && analysis.keyPoints.length > 0 && (
+              <div className="ar-section" style={{ '--section-color': 'var(--accent)' } as React.CSSProperties}>
+                <div className="ar-section-header">
+                  <span className="ar-section-icon">🔑</span>
+                  <span className="ar-section-label">Key Points</span>
+                </div>
+                <ul className="ar-section-body" style={{ paddingLeft: 20, margin: 0 }}>
+                  {analysis.keyPoints.map((p, i) => (
+                    <li key={i} style={{ marginBottom: 6 }} dangerouslySetInnerHTML={{ __html: formatSection(p) }} />
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Takeaways */}
+            {analysis.takeaways && analysis.takeaways.length > 0 && (
+              <div className="ar-section" style={{ '--section-color': 'var(--green)' } as React.CSSProperties}>
+                <div className="ar-section-header">
+                  <span className="ar-section-icon">✅</span>
+                  <span className="ar-section-label">Takeaways</span>
+                </div>
+                <ul className="ar-section-body" style={{ paddingLeft: 20, margin: 0 }}>
+                  {analysis.takeaways.map((p, i) => (
+                    <li key={i} style={{ marginBottom: 6 }} dangerouslySetInnerHTML={{ __html: formatSection(p) }} />
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Key Numbers */}
+            {analysis.keyNumbers && analysis.keyNumbers.length > 0 && (
+              <div className="ar-section" style={{ '--section-color': 'var(--teal)' } as React.CSSProperties}>
+                <div className="ar-section-header">
+                  <span className="ar-section-icon">🔢</span>
+                  <span className="ar-section-label">Key Numbers</span>
+                </div>
+                <ul className="ar-section-body" style={{ paddingLeft: 20, margin: 0 }}>
+                  {analysis.keyNumbers.map((p, i) => (
+                    <li key={i} style={{ marginBottom: 6 }} dangerouslySetInnerHTML={{ __html: formatSection(p) }} />
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Notable Quotes */}
+            {analysis.quotes && analysis.quotes.length > 0 && (
+              <div className="ar-section" style={{ '--section-color': 'var(--amber)' } as React.CSSProperties}>
+                <div className="ar-section-header">
+                  <span className="ar-section-icon">❝</span>
+                  <span className="ar-section-label">Notable Quotes</span>
+                </div>
+                <div className="ar-section-body">
+                  {analysis.quotes.map((q, i) => (
+                    <blockquote key={i} style={{ borderLeft: '3px solid var(--amber)', paddingLeft: 12, margin: '8px 0', fontStyle: 'italic', color: 'var(--text2)' }}>
+                      "{q}"
+                    </blockquote>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Signals */}
-            {(analysis.noveltySignals.length > 0 || analysis.hedgingSignals.length > 0 || analysis.cherryPickRisks.length > 0) && (
+            {((analysis.noveltySignals?.length ?? 0) > 0 || (analysis.hedgingSignals?.length ?? 0) > 0 || (analysis.cherryPickRisks?.length ?? 0) > 0) && (
               <div className="ar-signals">
                 <div className="ar-section-header">
                   <span className="ar-section-icon">🔍</span>
                   <span className="ar-section-label">Critical Signals</span>
                 </div>
-                {analysis.noveltySignals.length > 0 && (
+                {(analysis.noveltySignals?.length ?? 0) > 0 && (
                   <div className="ar-signal-group">
                     <div className="ar-signal-title" style={{ color: 'var(--accent)' }}>Novelty Claims</div>
                     <div className="ar-signal-items">
-                      {analysis.noveltySignals.map((s, i) => (
+                      {analysis.noveltySignals!.map((s, i) => (
                         <span key={i} className="ar-signal novelty">"{s}"</span>
                       ))}
                     </div>
                   </div>
                 )}
-                {analysis.hedgingSignals.length > 0 && (
+                {(analysis.hedgingSignals?.length ?? 0) > 0 && (
                   <div className="ar-signal-group">
                     <div className="ar-signal-title" style={{ color: 'var(--amber)' }}>Hedging Language</div>
                     <div className="ar-signal-items">
-                      {analysis.hedgingSignals.map((s, i) => (
+                      {analysis.hedgingSignals!.map((s, i) => (
                         <span key={i} className="ar-signal hedging">"{s}"</span>
                       ))}
                     </div>
                   </div>
                 )}
-                {analysis.cherryPickRisks.length > 0 && (
+                {(analysis.cherryPickRisks?.length ?? 0) > 0 && (
                   <div className="ar-signal-group">
                     <div className="ar-signal-title" style={{ color: 'var(--coral)' }}>Watch For</div>
                     <div className="ar-signal-items">
-                      {analysis.cherryPickRisks.map((s, i) => (
+                      {analysis.cherryPickRisks!.map((s, i) => (
                         <span key={i} className="ar-signal risk">{s}</span>
                       ))}
                     </div>

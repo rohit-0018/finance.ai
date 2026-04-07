@@ -475,6 +475,7 @@ export async function dbSaveArticle(article: {
   summary?: string
   topic: string
   tags: string[]
+  analysis?: unknown
   addedBy?: string
   isPrivate?: boolean
   approved?: boolean
@@ -488,6 +489,7 @@ export async function dbSaveArticle(article: {
       summary: article.summary ?? null,
       topic: article.topic,
       tags: article.tags,
+      analysis: article.analysis ?? null,
       added_by: article.addedBy ?? null,
       is_private: article.isPrivate ?? false,
       // Private articles don't need approval (only owner sees them).
@@ -498,7 +500,36 @@ export async function dbSaveArticle(article: {
     .single()
 
   if (error) throw new Error(`Failed to save article: ${error.message}`)
-  return data as Article
+  const saved = data as Article
+  // Hydrate uploader so the UI can show "Added by ..." immediately
+  if (saved.added_by) {
+    const uploaders = await dbGetUploaders([saved.added_by])
+    saved.uploader = uploaders[saved.added_by] ?? null
+  }
+  return saved
+}
+
+// Batch fetch uploader info for a set of user IDs.
+export async function dbGetUploaders(userIds: string[]): Promise<Record<string, import('../types').Uploader>> {
+  const ids = Array.from(new Set(userIds.filter(Boolean)))
+  if (ids.length === 0) return {}
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, username, display_name, is_admin')
+    .in('id', ids)
+  if (error) return {}
+  const map: Record<string, import('../types').Uploader> = {}
+  for (const u of data ?? []) {
+    map[(u as { id: string }).id] = u as import('../types').Uploader
+  }
+  return map
+}
+
+async function attachUploaders(articles: Article[]): Promise<Article[]> {
+  const ids = articles.map((a) => a.added_by).filter((x): x is string => !!x)
+  if (ids.length === 0) return articles
+  const map = await dbGetUploaders(ids)
+  return articles.map((a) => ({ ...a, uploader: a.added_by ? map[a.added_by] ?? null : null }))
 }
 
 // Visibility rules:
@@ -528,7 +559,7 @@ export async function dbGetArticles(opts?: {
 
   const { data, error } = await query
   if (error) throw new Error(`Failed to fetch articles: ${error.message}`)
-  return (data ?? []) as Article[]
+  return await attachUploaders((data ?? []) as Article[])
 }
 
 export async function dbGetArticle(id: string): Promise<Article> {
@@ -539,7 +570,12 @@ export async function dbGetArticle(id: string): Promise<Article> {
     .single()
 
   if (error) throw new Error(`Failed to fetch article: ${error.message}`)
-  return data as Article
+  const article = data as Article
+  if (article.added_by) {
+    const map = await dbGetUploaders([article.added_by])
+    article.uploader = map[article.added_by] ?? null
+  }
+  return article
 }
 
 // Pending public articles awaiting admin approval.
@@ -564,10 +600,12 @@ export async function dbApproveArticle(id: string, approved: boolean): Promise<v
   if (error) throw new Error(`Failed to update article approval: ${error.message}`)
 }
 
-export async function dbUpdateArticleAnalysis(id: string, analysis: unknown): Promise<void> {
+export async function dbUpdateArticleAnalysis(id: string, analysis: unknown, summary?: string): Promise<void> {
+  const update: Record<string, unknown> = { analysis }
+  if (summary !== undefined) update.summary = summary
   const { error } = await supabase
     .from('articles')
-    .update({ analysis })
+    .update(update)
     .eq('id', id)
 
   if (error) throw new Error(`Failed to save analysis: ${error.message}`)
