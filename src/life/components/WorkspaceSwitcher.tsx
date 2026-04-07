@@ -28,6 +28,12 @@ const WorkspaceSwitcher: React.FC = () => {
     [lifeUser, active?.id, setActive, setLifeUser]
   )
 
+  const switchToAll = React.useCallback(() => {
+    if (!lifeUser || active === null) return
+    setActive(null)
+    invalidateAll()
+  }, [lifeUser, active, setActive])
+
   // Keyboard shortcuts: ⌘1 = first workspace, ⌘2 = second, etc.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -45,6 +51,16 @@ const WorkspaceSwitcher: React.FC = () => {
 
   return (
     <div className="life-workspace-switcher" role="tablist" aria-label="Workspace">
+      <button
+        role="tab"
+        aria-selected={active === null}
+        className={active === null ? 'active' : ''}
+        onClick={switchToAll}
+        title="Show work + personal together"
+      >
+        <span className="ws-dot" style={{ background: 'linear-gradient(135deg,#3b82f6,#8b5cf6)' }} />
+        <span>All</span>
+      </button>
       {workspaces.map((w, i) => {
         const isActive = w.id === active?.id
         return (

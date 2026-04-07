@@ -1,177 +1,434 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import FullCalendar from '@fullcalendar/react'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import timeGridPlugin from '@fullcalendar/timegrid'
+import listPlugin from '@fullcalendar/list'
+import interactionPlugin from '@fullcalendar/interaction'
+import type {
+  EventClickArg,
+  EventDropArg,
+  EventInput,
+  DatesSetArg,
+  DateSelectArg,
+} from '@fullcalendar/core'
+import type { EventResizeDoneArg } from '@fullcalendar/interaction'
+
 import LifeLayout from '../LifeLayout'
 import { useLifeStore } from '../store'
-import { listTimeBlocks, createTimeBlock, deleteTimeBlock } from '../lib/db'
-import type { LifeTimeBlock, TimeBlockKind } from '../types'
-import { todayLocal, prettyDate } from '../lib/time'
+import {
+  listTasksInRangeAllWorkspaces,
+  listTimeBlocksInRange,
+  updateTask,
+  createTimeBlock,
+  deleteTimeBlock,
+} from '../lib/db'
+import type { LifeTask, LifeTimeBlock, LifeWorkspace } from '../types'
 
-const KINDS: TimeBlockKind[] = ['office', 'deep', 'learn', 'admin', 'break']
-const PIXELS_PER_HOUR = 60
-const HOURS = Array.from({ length: 24 }, (_, i) => i)
+const QUESTION_TAG = 'question'
 
-function minutesToLabel(m: number): string {
-  const h = Math.floor(m / 60)
-  const min = m % 60
-  return `${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`
+// Distinct, accessible colors per source. Work=blue, Personal=violet,
+// Question=amber, Time block=teal. These also appear in the legend.
+const COLORS = {
+  work: { bg: '#2563eb', border: '#1d4ed8' },
+  personal: { bg: '#7c3aed', border: '#6d28d9' },
+  question: { bg: '#f59e0b', border: '#d97706' },
+  block: { bg: '#0d9488', border: '#0f766e' },
+  done: { bg: '#9ca3af', border: '#6b7280' },
 }
 
-function snap15(min: number): number {
-  return Math.max(0, Math.min(1439, Math.round(min / 15) * 15))
+interface ParsedEvent extends EventInput {
+  extendedProps: {
+    kind: 'task' | 'block'
+    task?: LifeTask
+    block?: LifeTimeBlock
+    workspaceKind?: 'work' | 'personal' | null
+    isQuestion?: boolean
+  }
+}
+
+function workspaceKindOf(
+  workspaceId: string,
+  workspaces: LifeWorkspace[]
+): 'work' | 'personal' | null {
+  const ws = workspaces.find((w) => w.id === workspaceId)
+  return ws?.kind ?? null
+}
+
+function addMinutesIso(iso: string, minutes: number): string {
+  return new Date(new Date(iso).getTime() + minutes * 60_000).toISOString()
+}
+
+function timeBlockToEvent(b: LifeTimeBlock): ParsedEvent {
+  // life_time_blocks store start/end as minutes-since-midnight against the
+  // local-display date. Build the ISO by appending the offset to the date.
+  const startH = Math.floor(b.start_minute / 60)
+  const startM = b.start_minute % 60
+  const endH = Math.floor(b.end_minute / 60)
+  const endM = b.end_minute % 60
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return {
+    id: `block:${b.id}`,
+    title: `▦ ${b.label}`,
+    start: `${b.date}T${pad(startH)}:${pad(startM)}:00`,
+    end: `${b.date}T${pad(endH)}:${pad(endM)}:00`,
+    backgroundColor: COLORS.block.bg,
+    borderColor: COLORS.block.border,
+    textColor: '#ffffff',
+    classNames: ['life-evt', 'life-evt-block'],
+    editable: false,
+    extendedProps: { kind: 'block', block: b },
+  }
+}
+
+function taskToEvent(
+  t: LifeTask,
+  workspaces: LifeWorkspace[]
+): ParsedEvent | null {
+  const isQuestion = Array.isArray(t.tags) && t.tags.includes(QUESTION_TAG)
+  const kind = workspaceKindOf(t.workspace_id, workspaces)
+  const palette =
+    t.status === 'done'
+      ? COLORS.done
+      : isQuestion
+      ? COLORS.question
+      : kind === 'work'
+      ? COLORS.work
+      : COLORS.personal
+
+  const titlePrefix = isQuestion ? '❓ ' : kind === 'work' ? '💼 ' : '🏠 '
+  const baseTitle = `${titlePrefix}${t.title}`
+
+  if (t.start_at) {
+    const dur = t.estimate_min && t.estimate_min > 0 ? t.estimate_min : 30
+    return {
+      id: `task:${t.id}`,
+      title: baseTitle,
+      start: t.start_at,
+      end: addMinutesIso(t.start_at, dur),
+      backgroundColor: palette.bg,
+      borderColor: palette.border,
+      textColor: '#ffffff',
+      classNames: ['life-evt', `life-evt-${kind ?? 'personal'}`],
+      extendedProps: {
+        kind: 'task',
+        task: t,
+        workspaceKind: kind,
+        isQuestion,
+      },
+    }
+  }
+  if (t.scheduled_for) {
+    return {
+      id: `task:${t.id}`,
+      title: baseTitle,
+      start: t.scheduled_for,
+      allDay: true,
+      backgroundColor: palette.bg,
+      borderColor: palette.border,
+      textColor: '#ffffff',
+      classNames: ['life-evt', 'life-evt-allday', `life-evt-${kind ?? 'personal'}`],
+      extendedProps: {
+        kind: 'task',
+        task: t,
+        workspaceKind: kind,
+        isQuestion,
+      },
+    }
+  }
+  return null
 }
 
 const SchedulePage: React.FC = () => {
+  const navigate = useNavigate()
   const lifeUser = useLifeStore((s) => s.lifeUser)
-  const [date, setDate] = useState(todayLocal(lifeUser?.timezone))
+  const workspaces = useLifeStore((s) => s.workspaces)
+  const activeWorkspace = useLifeStore((s) => s.activeWorkspace)
+
+  const [tasks, setTasks] = useState<LifeTask[]>([])
   const [blocks, setBlocks] = useState<LifeTimeBlock[]>([])
-  const [drag, setDrag] = useState<{ start: number; end: number } | null>(null)
-  const [pendingKind, setPendingKind] = useState<TimeBlockKind>('deep')
-  const canvasRef = useRef<HTMLDivElement>(null)
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null)
+  const [filter, setFilter] = useState<'all' | 'work' | 'personal' | 'questions'>('all')
+  const [loading, setLoading] = useState(false)
+  const calendarRef = useRef<FullCalendar | null>(null)
+
+  // Re-load whenever the visible date range changes (FullCalendar fires
+  // datesSet on mount, on view-change, on prev/next).
+  const onDatesSet = useCallback((arg: DatesSetArg) => {
+    const from = arg.startStr.slice(0, 10)
+    const to = arg.endStr.slice(0, 10)
+    setRange({ from, to })
+  }, [])
 
   const load = useCallback(async () => {
-    if (!lifeUser) return
-    setBlocks(await listTimeBlocks(lifeUser.id, date))
-  }, [lifeUser, date])
+    if (!lifeUser || !range) return
+    setLoading(true)
+    try {
+      const [t, b] = await Promise.all([
+        listTasksInRangeAllWorkspaces(lifeUser.id, range.from, range.to),
+        listTimeBlocksInRange(lifeUser.id, range.from, range.to),
+      ])
+      setTasks(t)
+      setBlocks(b)
+    } finally {
+      setLoading(false)
+    }
+  }, [lifeUser, range])
 
   useEffect(() => {
     load()
   }, [load])
 
-  // y-pixel inside canvas → minutes since midnight
-  const yToMinutes = (y: number): number => {
-    return snap15((y / PIXELS_PER_HOUR) * 60)
+  const events: ParsedEvent[] = useMemo(() => {
+    const out: ParsedEvent[] = []
+    for (const t of tasks) {
+      // Respect filter and (when not "All") respect the active workspace too.
+      if (filter === 'work' && workspaceKindOf(t.workspace_id, workspaces) !== 'work') continue
+      if (filter === 'personal' && workspaceKindOf(t.workspace_id, workspaces) !== 'personal')
+        continue
+      if (filter === 'questions' && !(t.tags ?? []).includes(QUESTION_TAG)) continue
+      // When activeWorkspace is set (not "All"), and the user picked filter=all,
+      // still scope to the active workspace so the switcher means something.
+      if (
+        filter === 'all' &&
+        activeWorkspace &&
+        t.workspace_id !== activeWorkspace.id
+      )
+        continue
+      const ev = taskToEvent(t, workspaces)
+      if (ev) out.push(ev)
+    }
+    for (const b of blocks) {
+      if (
+        filter === 'all' &&
+        activeWorkspace &&
+        b.workspace_id !== activeWorkspace.id
+      )
+        continue
+      if (filter === 'work' && workspaceKindOf(b.workspace_id, workspaces) !== 'work') continue
+      if (filter === 'personal' && workspaceKindOf(b.workspace_id, workspaces) !== 'personal')
+        continue
+      if (filter === 'questions') continue
+      out.push(timeBlockToEvent(b))
+    }
+    return out
+  }, [tasks, blocks, workspaces, filter, activeWorkspace])
+
+  const onEventClick = (arg: EventClickArg) => {
+    const props = arg.event.extendedProps as ParsedEvent['extendedProps']
+    if (props.kind !== 'task' || !props.task) return
+    if (props.isQuestion) navigate('/life/questions')
+    else navigate('/life/todos')
   }
 
-  const onMouseDown = (e: React.MouseEvent) => {
-    if (!canvasRef.current) return
-    const rect = canvasRef.current.getBoundingClientRect()
-    const m = yToMinutes(e.clientY - rect.top)
-    setDrag({ start: m, end: m + 30 })
+  const onEventDrop = async (arg: EventDropArg) => {
+    if (!lifeUser) return
+    const props = arg.event.extendedProps as ParsedEvent['extendedProps']
+    if (props.kind !== 'task' || !props.task) {
+      arg.revert()
+      return
+    }
+    const task = props.task
+    try {
+      if (arg.event.allDay) {
+        await updateTask(lifeUser.id, task.id, {
+          scheduled_for: arg.event.startStr.slice(0, 10),
+          start_at: null,
+        })
+      } else if (arg.event.start) {
+        const startIso = arg.event.start.toISOString()
+        await updateTask(lifeUser.id, task.id, {
+          scheduled_for: arg.event.startStr.slice(0, 10),
+          start_at: startIso,
+        })
+      }
+      load()
+    } catch (e) {
+      console.error(e)
+      arg.revert()
+    }
   }
-  const onMouseMove = (e: React.MouseEvent) => {
-    if (!drag || !canvasRef.current) return
-    const rect = canvasRef.current.getBoundingClientRect()
-    const m = yToMinutes(e.clientY - rect.top)
-    setDrag({ start: drag.start, end: Math.max(drag.start + 15, m) })
+
+  const onEventResize = async (arg: EventResizeDoneArg) => {
+    if (!lifeUser) return
+    const props = arg.event.extendedProps as ParsedEvent['extendedProps']
+    if (props.kind !== 'task' || !props.task) {
+      arg.revert()
+      return
+    }
+    const start = arg.event.start
+    const end = arg.event.end
+    if (!start || !end) {
+      arg.revert()
+      return
+    }
+    const minutes = Math.max(15, Math.round((end.getTime() - start.getTime()) / 60_000))
+    try {
+      await updateTask(lifeUser.id, props.task.id, { estimate_min: minutes })
+      load()
+    } catch (e) {
+      console.error(e)
+      arg.revert()
+    }
   }
-  const onMouseUp = async () => {
-    if (!lifeUser || !drag) return
-    const label = window.prompt('Label this block:', pendingKind)
-    if (label && label.trim()) {
+
+  // Drag-select an empty slot → create a focus time block.
+  const onSelect = async (arg: DateSelectArg) => {
+    if (!lifeUser) return
+    const label = window.prompt('Block label (e.g. Deep work, Standup, Gym):')
+    if (!label || !label.trim()) {
+      arg.view.calendar.unselect()
+      return
+    }
+    const date = arg.startStr.slice(0, 10)
+    const startMin = arg.start.getHours() * 60 + arg.start.getMinutes()
+    const endMin = arg.end.getHours() * 60 + arg.end.getMinutes()
+    try {
+      // If the selection lives in a single workspace context, file the block
+      // there. With "All" mode, fall back to personal.
+      const wsId =
+        activeWorkspace?.id ??
+        workspaces.find((w) => w.kind === 'personal')?.id ??
+        workspaces[0]?.id
       await createTimeBlock({
         userId: lifeUser.id,
+        workspaceId: wsId,
         date,
-        start_minute: drag.start,
-        end_minute: drag.end,
+        start_minute: startMin,
+        end_minute: endMin,
         label: label.trim(),
-        kind: pendingKind,
+        kind: 'deep',
       })
       load()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      arg.view.calendar.unselect()
     }
-    setDrag(null)
   }
 
-  const remove = async (id: string) => {
-    if (!lifeUser) return
-    await deleteTimeBlock(lifeUser.id, id)
-    load()
+  // Right-click a time block to delete it (FC has no native right-click,
+  // so we attach via eventDidMount).
+  const onEventDidMount = (info: { event: { extendedProps: ParsedEvent['extendedProps']; id: string }, el: HTMLElement }) => {
+    const props = info.event.extendedProps as ParsedEvent['extendedProps']
+    if (props.kind !== 'block' || !props.block) return
+    const block = props.block
+    info.el.addEventListener('contextmenu', (e: MouseEvent) => {
+      e.preventDefault()
+      if (!lifeUser) return
+      if (confirm(`Delete time block "${block.label}"?`)) {
+        deleteTimeBlock(lifeUser.id, block.id).then(load)
+      }
+    })
   }
 
-  const shiftDate = (delta: number) => {
-    const d = new Date(`${date}T00:00:00Z`)
-    d.setUTCDate(d.getUTCDate() + delta)
-    setDate(d.toISOString().slice(0, 10))
-  }
-
-  const workStart = (lifeUser?.work_start_hour ?? 11) * 60
-  const workEnd = (lifeUser?.work_end_hour ?? 20) * 60
+  const counts = useMemo(() => {
+    const c = { work: 0, personal: 0, question: 0, block: blocks.length }
+    for (const t of tasks) {
+      if ((t.tags ?? []).includes(QUESTION_TAG)) c.question++
+      else if (workspaceKindOf(t.workspace_id, workspaces) === 'work') c.work++
+      else c.personal++
+    }
+    return c
+  }, [tasks, blocks, workspaces])
 
   return (
-    <LifeLayout title="Schedule">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <button className="life-btn" onClick={() => shiftDate(-1)}>← prev</button>
-        <button className="life-btn" onClick={() => setDate(todayLocal(lifeUser?.timezone))}>today</button>
-        <button className="life-btn" onClick={() => shiftDate(1)}>next →</button>
-        <span style={{ marginLeft: 12, fontWeight: 600 }}>
-          {prettyDate(date, lifeUser?.timezone)} · {date}
-        </span>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>kind:</span>
-        {KINDS.map((k) => (
-          <button
-            key={k}
-            className={`life-btn ${pendingKind === k ? 'primary' : ''}`}
-            onClick={() => setPendingKind(k)}
-            style={{ padding: '6px 10px', fontSize: '0.75rem' }}
-          >
-            {k}
-          </button>
-        ))}
-      </div>
-
-      <p style={{ margin: '0 0 14px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-        Click and drag on the timeline to create a block. Snaps to 15 minutes.
-      </p>
-
-      <div className="life-schedule">
-        <div className="life-schedule-hours">
-          {HOURS.map((h) => (
-            <div key={h} className="life-schedule-hour">{h.toString().padStart(2, '0')}:00</div>
+    <LifeLayout title="Calendar">
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 10,
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['all', 'work', 'personal', 'questions'] as const).map((f) => (
+            <button
+              key={f}
+              className={`life-btn ${filter === f ? 'primary' : ''}`}
+              onClick={() => setFilter(f)}
+              style={{ textTransform: 'capitalize' }}
+            >
+              {f === 'all' ? 'United' : f}
+            </button>
           ))}
         </div>
-        <div
-          className="life-schedule-canvas"
-          ref={canvasRef}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={() => drag && setDrag(null)}
-          style={{ height: HOURS.length * PIXELS_PER_HOUR }}
-        >
-          {HOURS.map((h) => {
-            const m = h * 60
-            const inWork = m >= workStart && m < workEnd
-            return <div key={h} className={`life-schedule-row ${inWork ? 'work' : ''}`} />
-          })}
-          {blocks.map((b) => {
-            const top = (b.start_minute / 60) * PIXELS_PER_HOUR
-            const height = ((b.end_minute - b.start_minute) / 60) * PIXELS_PER_HOUR
-            return (
-              <div
-                key={b.id}
-                className={`life-schedule-block kind-${b.kind}`}
-                style={{ top, height }}
-                title={`${minutesToLabel(b.start_minute)}–${minutesToLabel(b.end_minute)} · ${b.kind}`}
-              >
-                <div className="blk-label">{b.label}</div>
-                <div className="blk-time">
-                  {minutesToLabel(b.start_minute)}–{minutesToLabel(b.end_minute)}
-                </div>
-                <button
-                  className="blk-del"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    remove(b.id)
-                  }}
-                  aria-label="Delete block"
-                >
-                  ✕
-                </button>
-              </div>
-            )
-          })}
-          {drag && (
-            <div
-              className="life-schedule-drag"
-              style={{
-                top: (drag.start / 60) * PIXELS_PER_HOUR,
-                height: ((drag.end - drag.start) / 60) * PIXELS_PER_HOUR,
-              }}
-            />
-          )}
+        <div style={{ flex: 1 }} />
+        <div className="life-cal-legend">
+          <Legend color={COLORS.work.bg} label={`Work · ${counts.work}`} />
+          <Legend color={COLORS.personal.bg} label={`Personal · ${counts.personal}`} />
+          <Legend color={COLORS.question.bg} label={`Questions · ${counts.question}`} />
+          <Legend color={COLORS.block.bg} label={`Focus blocks · ${counts.block}`} />
         </div>
+      </div>
+
+      <p style={{ margin: '0 0 12px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+        Drag events to reschedule, drag the bottom edge to resize, or drag-select an empty slot
+        to create a focus block. Right-click a block to delete it. United view shows work +
+        personal together; prefix new tasks with <code>Ofc</code> or <code>Prs</code> to file
+        them automatically.
+      </p>
+
+      <div className={`life-fc-wrap ${loading ? 'loading' : ''}`}>
+        <FullCalendar
+          ref={calendarRef}
+          plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+          initialView="timeGridWeek"
+          headerToolbar={{
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
+          }}
+          buttonText={{
+            today: 'today',
+            month: 'month',
+            week: 'week',
+            day: 'day',
+            list: 'agenda',
+          }}
+          firstDay={1}
+          nowIndicator
+          selectable
+          selectMirror
+          editable
+          eventResizableFromStart={false}
+          dayMaxEventRows={4}
+          slotDuration="00:30:00"
+          slotLabelInterval="01:00"
+          scrollTime={`${(lifeUser?.work_start_hour ?? 9).toString().padStart(2, '0')}:00:00`}
+          allDaySlot
+          height="auto"
+          contentHeight="auto"
+          expandRows
+          events={events}
+          datesSet={onDatesSet}
+          eventClick={onEventClick}
+          eventDrop={onEventDrop}
+          eventResize={onEventResize}
+          select={onSelect}
+          eventDidMount={onEventDidMount as never}
+          eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
+        />
       </div>
     </LifeLayout>
   )
 }
+
+const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.75rem' }}>
+    <span
+      style={{
+        width: 10,
+        height: 10,
+        borderRadius: 2,
+        background: color,
+        display: 'inline-block',
+      }}
+    />
+    {label}
+  </span>
+)
 
 export default SchedulePage

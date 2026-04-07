@@ -26,6 +26,12 @@
     "life:db:reset": "prisma migrate reset --config prisma.life.config.ts"
   },
   "dependencies": {
+    "@fullcalendar/core": "^6.1.20",
+    "@fullcalendar/daygrid": "^6.1.20",
+    "@fullcalendar/interaction": "^6.1.20",
+    "@fullcalendar/list": "^6.1.20",
+    "@fullcalendar/react": "^6.1.20",
+    "@fullcalendar/timegrid": "^6.1.20",
     "@supabase/supabase-js": "^2.49.1",
     "@tanstack/react-query": "^5.64.1",
     "date-fns": "^4.1.0",

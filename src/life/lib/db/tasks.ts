@@ -21,6 +21,27 @@ export async function listTasksForDate(
   return (data ?? []) as LifeTask[]
 }
 
+/**
+ * Fetch every task with a scheduled_for or start_at falling inside [from, to]
+ * across ALL workspaces. Used by the unified Calendar view so the user sees
+ * work + personal items side-by-side regardless of which workspace is active.
+ */
+export async function listTasksInRangeAllWorkspaces(
+  userId: string,
+  fromDate: string,
+  toDate: string
+): Promise<LifeTask[]> {
+  const { data, error } = await lifeDb()
+    .from('life_tasks')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('scheduled_for', fromDate)
+    .lte('scheduled_for', toDate)
+    .order('scheduled_for', { ascending: true })
+  if (error) throw new Error(`listTasksInRangeAllWorkspaces: ${error.message}`)
+  return (data ?? []) as LifeTask[]
+}
+
 export async function listOverdueOpenTasks(
   userId: string,
   beforeDate: string,

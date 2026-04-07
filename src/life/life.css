@@ -48,7 +48,20 @@
 .life-nav {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+.life-nav-group {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
+}
+.life-nav-group-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--text-muted, #888);
+  padding: 0 11px 4px;
 }
 .life-nav button {
   display: flex;
@@ -549,6 +562,130 @@
 .life-pulse-row p { margin: 0; font-size: 0.88rem; line-height: 1.5; }
 
 /* ── Schedule (day timeline) ──────────────────────────────────────── */
+
+/* ── FullCalendar theming ─────────────────────────────────────────── */
+
+.life-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.life-fc-wrap {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  position: relative;
+  transition: opacity 0.15s;
+}
+.life-fc-wrap.loading { opacity: 0.7; }
+
+.life-fc-wrap .fc {
+  font-family: inherit;
+  --fc-border-color: var(--border);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: transparent;
+  --fc-list-event-hover-bg-color: var(--hover, rgba(127,127,127,0.08));
+  --fc-today-bg-color: rgba(99, 102, 241, 0.06);
+  --fc-now-indicator-color: #ef4444;
+  --fc-event-text-color: #fff;
+  color: var(--text);
+}
+
+.life-fc-wrap .fc .fc-toolbar.fc-header-toolbar {
+  margin-bottom: 14px;
+}
+.life-fc-wrap .fc-toolbar-title {
+  font-size: 1.1rem !important;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.life-fc-wrap .fc .fc-button {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 6px 12px;
+  text-transform: capitalize;
+  box-shadow: none;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+.life-fc-wrap .fc .fc-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.life-fc-wrap .fc .fc-button-primary:not(:disabled).fc-button-active,
+.life-fc-wrap .fc .fc-button-primary:not(:disabled):active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.life-fc-wrap .fc .fc-button-group > .fc-button {
+  border-radius: 0;
+}
+.life-fc-wrap .fc .fc-button-group > .fc-button:first-child { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.life-fc-wrap .fc .fc-button-group > .fc-button:last-child { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+
+.life-fc-wrap .fc-col-header-cell-cushion,
+.life-fc-wrap .fc-list-day-cushion {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.life-fc-wrap .fc-list-day-cushion { background: var(--bg2, transparent); }
+
+.life-fc-wrap .fc-daygrid-day-number,
+.life-fc-wrap .fc-timegrid-slot-label-cushion {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  text-decoration: none;
+}
+
+.life-fc-wrap .fc-timegrid-slot {
+  height: 2.4em;
+}
+
+.life-fc-wrap .life-evt {
+  border-radius: 5px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  padding: 2px 4px;
+  border-width: 0 0 0 3px;
+  cursor: pointer;
+}
+.life-fc-wrap .life-evt-allday {
+  font-size: 0.72rem;
+}
+.life-fc-wrap .life-evt-block {
+  opacity: 0.92;
+}
+
+.life-fc-wrap .fc-event:hover {
+  filter: brightness(1.1);
+}
+.life-fc-wrap .fc-day-today { font-weight: 600; }
+
+.life-fc-wrap .fc-timegrid-now-indicator-line {
+  border-color: #ef4444;
+  border-width: 2px;
+}
+.life-fc-wrap .fc-timegrid-now-indicator-arrow {
+  border-color: #ef4444;
+}
+
+.life-fc-wrap .fc-list-empty {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
 
 .life-schedule {
   display: flex;

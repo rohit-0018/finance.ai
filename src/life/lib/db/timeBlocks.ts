@@ -19,6 +19,24 @@ export async function listTimeBlocks(
   return (data ?? []) as LifeTimeBlock[]
 }
 
+/** All time blocks across both workspaces in a date range. Calendar view. */
+export async function listTimeBlocksInRange(
+  userId: string,
+  fromDate: string,
+  toDate: string
+): Promise<LifeTimeBlock[]> {
+  const { data, error } = await lifeDb()
+    .from('life_time_blocks')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .order('date', { ascending: true })
+    .order('start_minute', { ascending: true })
+  if (error) throw new Error(`listTimeBlocksInRange: ${error.message}`)
+  return (data ?? []) as LifeTimeBlock[]
+}
+
 export async function createTimeBlock(input: {
   userId: string
   workspaceId?: string

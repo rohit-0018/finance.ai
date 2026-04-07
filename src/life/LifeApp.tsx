@@ -7,6 +7,7 @@ import './life.css'
 const TodayPage = lazy(() => import('./pages/TodayPage'))
 const TodosPage = lazy(() => import('./pages/TodosPage'))
 const SchedulePage = lazy(() => import('./pages/SchedulePage'))
+const QuestionsPage = lazy(() => import('./pages/QuestionsPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const GoalsPage = lazy(() => import('./pages/GoalsPage'))
@@ -34,7 +35,9 @@ const LifeApp: React.FC = () => (
     <Routes>
       <Route index element={<TodayPage />} />
       <Route path="todos" element={<TodosPage />} />
+      <Route path="questions" element={<QuestionsPage />} />
       <Route path="schedule" element={<SchedulePage />} />
+      <Route path="calendar" element={<SchedulePage />} />
       <Route path="projects" element={<ProjectsPage />} />
       <Route path="projects/:id" element={<ProjectDetailPage />} />
       <Route path="goals" element={<GoalsPage />} />

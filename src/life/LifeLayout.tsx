@@ -29,20 +29,43 @@ import NotificationBell from './components/NotificationBell'
 import EodModal from './components/EodModal'
 import WorkspaceSwitcher from './components/WorkspaceSwitcher'
 
-const NAV: Array<{ path: string; label: string; icon: React.ReactNode }> = [
-  { path: '/life', label: 'Today', icon: <Icon kind="sun" /> },
-  { path: '/life/todos', label: 'Todos', icon: <Icon kind="check" /> },
-  { path: '/life/work', label: 'Work', icon: <Icon kind="briefcase" /> },
-  { path: '/life/personal', label: 'Personal', icon: <Icon kind="heart" /> },
-  { path: '/life/learnings', label: 'Learnings', icon: <Icon kind="bulb" /> },
-  { path: '/life/memory', label: 'Memory', icon: <Icon kind="brain" /> },
-  { path: '/life/schedule', label: 'Schedule', icon: <Icon kind="clock" /> },
-  { path: '/life/projects', label: 'Projects', icon: <Icon kind="layers" /> },
-  { path: '/life/goals', label: 'Goals', icon: <Icon kind="target" /> },
-  { path: '/life/learn', label: 'Learn', icon: <Icon kind="book" /> },
-  { path: '/life/journal', label: 'Journal', icon: <Icon kind="edit" /> },
-  { path: '/life/review', label: 'Review', icon: <Icon kind="trend" /> },
-  { path: '/life/integrations', label: 'Integrations', icon: <Icon kind="link" /> },
+interface NavItem { path: string; label: string; icon: React.ReactNode }
+interface NavGroup { id: string; label: string; items: NavItem[] }
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'plan',
+    label: 'Plan',
+    items: [
+      { path: '/life', label: 'Today', icon: <Icon kind="sun" /> },
+      { path: '/life/calendar', label: 'Calendar', icon: <Icon kind="clock" /> },
+      { path: '/life/todos', label: 'Todos', icon: <Icon kind="check" /> },
+      { path: '/life/questions', label: 'Questions', icon: <Icon kind="question" /> },
+    ],
+  },
+  {
+    id: 'focus',
+    label: 'Focus',
+    items: [
+      { path: '/life/projects', label: 'Projects', icon: <Icon kind="layers" /> },
+      { path: '/life/goals', label: 'Goals', icon: <Icon kind="target" /> },
+    ],
+  },
+  {
+    id: 'reflect',
+    label: 'Reflect',
+    items: [
+      { path: '/life/journal', label: 'Journal', icon: <Icon kind="edit" /> },
+      { path: '/life/review', label: 'Review', icon: <Icon kind="trend" /> },
+    ],
+  },
+  {
+    id: 'system',
+    label: 'System',
+    items: [
+      { path: '/life/integrations', label: 'Integrations', icon: <Icon kind="link" /> },
+    ],
+  },
 ]
 
 function Icon({ kind }: { kind: string }) {
@@ -76,6 +99,8 @@ function Icon({ kind }: { kind: string }) {
       return (<svg {...p}><path d="M9 3a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3v0a3 3 0 0 0 3 3v0a3 3 0 0 0 3 3v2a3 3 0 0 0 6 0v-2a3 3 0 0 0 3-3v0a3 3 0 0 0 3-3v0a3 3 0 0 0-3-3V6a3 3 0 0 0-6 0" /></svg>)
     case 'check':
       return (<svg {...p}><polyline points="20 6 9 17 4 12" /></svg>)
+    case 'question':
+      return (<svg {...p}><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>)
     default:
       return null
   }
@@ -291,22 +316,27 @@ LIFE_DATABASE_URL=postgresql://...`}
         <WorkspaceSwitcher />
 
         <nav className="life-nav">
-          {NAV.map((item) => {
-            const active =
-              item.path === '/life'
-                ? location.pathname === '/life'
-                : location.pathname.startsWith(item.path)
-            return (
-              <button
-                key={item.path}
-                className={active ? 'active' : ''}
-                onClick={() => navigate(item.path)}
-              >
-                {item.icon}
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
+          {NAV_GROUPS.map((group) => (
+            <div className="life-nav-group" key={group.id}>
+              <div className="life-nav-group-label">{group.label}</div>
+              {group.items.map((item) => {
+                const active =
+                  item.path === '/life'
+                    ? location.pathname === '/life'
+                    : location.pathname.startsWith(item.path)
+                return (
+                  <button
+                    key={item.path}
+                    className={active ? 'active' : ''}
+                    onClick={() => navigate(item.path)}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </nav>
 
         <div className="life-sidebar-footer">

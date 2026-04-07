@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useLifeStore } from '../store'
 import { createTask } from '../lib/db'
 import { todayLocal, tomorrowLocal } from '../lib/time'
+import { resolveWorkspaceFromTitle } from '../lib/prefixRouter'
 
 interface ParseResult {
   title: string
@@ -48,6 +49,8 @@ interface Props {
 
 const QuickAddBar: React.FC<Props> = ({ onCreated, defaultProjectId = null }) => {
   const lifeUser = useLifeStore((s) => s.lifeUser)
+  const workspaces = useLifeStore((s) => s.workspaces)
+  const activeWorkspace = useLifeStore((s) => s.activeWorkspace)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -69,9 +72,16 @@ const QuickAddBar: React.FC<Props> = ({ onCreated, defaultProjectId = null }) =>
     try {
       const parsed = parseInput(value)
       if (!parsed.title) return
+      // Route Ofc/Prs prefixes to the right workspace before saving.
+      const routed = resolveWorkspaceFromTitle(
+        parsed.title,
+        workspaces,
+        activeWorkspace?.id ?? null
+      )
       await createTask({
         userId: lifeUser.id,
-        title: parsed.title,
+        workspaceId: routed.workspaceId ?? undefined,
+        title: routed.title,
         scheduled_for: parsed.scheduled_for,
         priority: parsed.priority,
         tags: parsed.tags,
@@ -102,7 +112,7 @@ const QuickAddBar: React.FC<Props> = ({ onCreated, defaultProjectId = null }) =>
         onKeyDown={(e) => {
           if (e.key === 'Enter') submit()
         }}
-        placeholder="Quick add a task — e.g. 'Fix login !1 #auth tomorrow'"
+        placeholder="Quick add — 'Ofc fix login !1 tomorrow' or 'Prs buy groceries'"
       />
       <kbd>⌘K</kbd>
     </div>
