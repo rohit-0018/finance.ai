@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Paper, PaperDigest, NoteType } from '../types'
+import { recordLLMCall } from '../store/llmDebug'
 
 const MODEL = 'gpt-4o'
 
@@ -8,6 +9,7 @@ async function callOpenAI(opts: {
   max_tokens?: number
   system?: string
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+  label?: string
 }): Promise<string> {
   const key = import.meta.env.OPENAI_KEY
   if (!key) throw new Error('OPENAI_KEY is not set in .env')
@@ -19,13 +21,47 @@ async function callOpenAI(opts: {
     ? [{ role: 'system' as const, content: opts.system }, ...opts.messages]
     : opts.messages
 
-  const response = await client.chat.completions.create({
-    model: opts.model ?? MODEL,
-    max_tokens: opts.max_tokens ?? 2048,
-    messages: msgs,
-  })
+  const model = opts.model ?? MODEL
+  const maxTokens = opts.max_tokens ?? 2048
+  const startedAt = Date.now()
+  const inputChars = msgs.reduce((n, m) => n + m.content.length, 0)
 
-  return response.choices[0]?.message?.content ?? ''
+  try {
+    const response = await client.chat.completions.create({
+      model,
+      max_tokens: maxTokens,
+      messages: msgs,
+    })
+    const out = response.choices[0]?.message?.content ?? ''
+    recordLLMCall({
+      label: opts.label ?? 'llm',
+      model,
+      startedAt,
+      durationMs: Date.now() - startedAt,
+      system: opts.system,
+      messages: opts.messages,
+      response: out,
+      inputChars,
+      outputChars: out.length,
+      maxTokens,
+    })
+    return out
+  } catch (err) {
+    recordLLMCall({
+      label: opts.label ?? 'llm',
+      model,
+      startedAt,
+      durationMs: Date.now() - startedAt,
+      system: opts.system,
+      messages: opts.messages,
+      response: '',
+      inputChars,
+      outputChars: 0,
+      maxTokens,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    throw err
+  }
 }
 
 // ---------- Zod Schemas ----------
@@ -233,7 +269,15 @@ Return ONLY the JSON object, no other text.`,
 // information. Adapts sections to the article type. Run BEFORE saving to DB so
 // the article is born already-analyzed.
 
-import type { DeepAnalysis as _DA, ArticleType } from '../types'
+import type {
+  DeepAnalysis as _DA,
+  ArticleType,
+  ExtractedConcept,
+  Tradeoff,
+  MentalModel,
+  ArchitectureFlow,
+  ExpertRule,
+} from '../types'
 
 function chunkText(text: string, size = 6000, overlap = 400): string[] {
   if (text.length <= size) return [text]
@@ -261,7 +305,8 @@ async function extractChunkFacts(
   total: number
 ): Promise<ChunkFacts> {
   const text = await callOpenAI({
-    max_tokens: 2500,
+    label: `extract.chunk ${idx + 1}/${total}`,
+    max_tokens: 4000,
     system: `You are a precise information extractor. Your job is to lose ZERO important information from this chunk. Extract everything that matters — facts, claims, arguments, numbers, names, quotes. Do NOT summarize. Do NOT skip details. If a sentence contains an idea, capture it. Be exhaustive.`,
     messages: [{
       role: 'user',
@@ -304,6 +349,7 @@ async function classifyArticle(title: string, sample: string): Promise<{
   tags: string[]
 }> {
   const text = await callOpenAI({
+    label: 'extract.classify',
     max_tokens: 400,
     messages: [{
       role: 'user',
@@ -324,6 +370,215 @@ Return ONLY JSON.`,
     return JSON.parse(extractJSON(text))
   } catch {
     return { articleType: 'other' as ArticleType, topic: 'General', tags: [] }
+  }
+}
+
+// Two-pass exhaustive concept extraction. Runs DIRECTLY on raw content (not on
+// factsBlock) so enumeration is lossless. Pass A lists every name in order;
+// Pass B enriches names in batches so the model has a dedicated budget per
+// concept instead of cramming everything into one JSON blob.
+async function enumerateConcepts(
+  title: string,
+  topic: string,
+  content: string
+): Promise<string[]> {
+  const chunks = chunkText(content, 10000, 500)
+  const ordered: string[] = []
+  const seen = new Set<string>()
+
+  for (let i = 0; i < chunks.length; i++) {
+    let text = ''
+    try {
+      text = await callOpenAI({
+        label: `extract.enumerate ${i + 1}/${chunks.length}`,
+        max_tokens: 3000,
+        system: `You are an exhaustive concept enumerator. Your ONLY job is to list every distinct concept, term, technique, pattern, definition, or named entity the article presents. If the article is a cheat sheet that numbers 33 concepts, you MUST return 33 names. Missing a concept is a hard failure. Do not summarize. Do not merge. Do not judge importance. Return every name the article explicitly names or defines.`,
+        messages: [{
+          role: 'user',
+          content: `Article: "${title}" (topic: ${topic})
+Chunk ${i + 1}/${chunks.length}.
+
+Return a JSON object: { "concepts": ["Name 1", "Name 2", ...] }
+
+Rules:
+- Preserve article order.
+- Use the article's own naming (e.g. "RLHF" not "Reinforcement Learning from Human Feedback" unless that's how the article titles it).
+- Include EVERY distinct named concept, technique, term, metric, pattern, or entity that gets its own definition/explanation — even if only one sentence.
+- If the article numbers the concepts (1/2/3…), your count MUST match that numbering.
+- Do NOT return definitions here. Only names.
+- Do NOT merge sibling concepts into one entry.
+
+CHUNK:
+"""${chunks[i]}"""
+
+Return ONLY the JSON object.`,
+        }],
+      })
+      const parsed = JSON.parse(extractJSON(text))
+      const names: unknown = parsed.concepts
+      if (Array.isArray(names)) {
+        for (const raw of names) {
+          if (typeof raw !== 'string') continue
+          const name = raw.trim()
+          if (!name) continue
+          const key = name.toLowerCase()
+          if (seen.has(key)) continue
+          seen.add(key)
+          ordered.push(name)
+        }
+      }
+    } catch {
+      // continue — a single failed chunk should not kill enumeration
+    }
+  }
+  return ordered
+}
+
+async function enrichConcepts(
+  title: string,
+  content: string,
+  names: string[]
+): Promise<ExtractedConcept[]> {
+  if (names.length === 0) return []
+  const BATCH = 10
+  const out: ExtractedConcept[] = []
+  const totalBatches = Math.ceil(names.length / BATCH)
+
+  for (let i = 0; i < names.length; i += BATCH) {
+    const batch = names.slice(i, i + BATCH)
+    const batchIdx = Math.floor(i / BATCH) + 1
+    try {
+      const text = await callOpenAI({
+        label: `extract.enrich ${batchIdx}/${totalBatches}`,
+        max_tokens: 6000,
+        system: `You produce rich, faithful concept cards grounded in the article. Plain language. No padding. Preserve the article's framing. If the article is brief on a concept, your card should be brief and faithful — do NOT invent material.`,
+        messages: [{
+          role: 'user',
+          content: `Article: "${title}"
+
+You are given ${batch.length} concept names. For EACH name, produce a full JSON card using ONLY information from the article.
+
+CONCEPTS TO ENRICH (preserve this exact order and naming):
+${batch.map((n, j) => `${j + 1}. ${n}`).join('\n')}
+
+ARTICLE CONTENT:
+"""${content.slice(0, 60000)}"""
+
+Return JSON: { "concepts": [ {card}, {card}, ... ] }
+
+Each card shape:
+{
+  "name": "exact name from the list above",
+  "tier": "foundational" | "intermediate" | "implementation" | "expert",
+  "oneLiner": "single-sentence plain-language definition",
+  "deepDive": "2-5 sentences explaining mechanism, why it matters, and the key detail from the article",
+  "analogy": "optional mental anchor or comparison",
+  "prerequisites": ["concept names needed first"],
+  "relatedConcepts": ["adjacent concepts from this article"],
+  "example": "optional concrete example from the article"
+}
+
+HARD RULES:
+- You MUST return exactly ${batch.length} cards in the given order.
+- You MUST NOT skip any concept in the list.
+- The "name" of each card must match the list exactly.
+- Tier guidance: foundational = "must know to read the article", intermediate = "working knowledge", implementation = "details hit when building", expert = "judgment calls and edge cases".
+
+Return ONLY the JSON object.`,
+        }],
+      })
+      const parsed = JSON.parse(extractJSON(text))
+      if (Array.isArray(parsed.concepts)) {
+        for (const c of parsed.concepts as ExtractedConcept[]) {
+          if (c && typeof c.name === 'string') out.push(c)
+        }
+      }
+    } catch {
+      // Skip failed batch but keep going — partial is better than none.
+    }
+  }
+  return out
+}
+
+async function extractExpertLayer(
+  title: string,
+  topic: string,
+  factsBlock: string
+): Promise<Partial<_DA>> {
+  const text = await callOpenAI({
+    label: 'extract.expert-layer',
+    max_tokens: 12000,
+    system: `You are a senior staff engineer and educator. You distill technical articles into an expert-grade structured knowledge object so a reader never needs another source on the topic. Be exhaustive — capture EVERY concept, tradeoff, mental model, and gotcha from the material. Plain language. No filler. Prefer concrete over abstract.`,
+    messages: [{
+      role: 'user',
+      content: `Article: "${title}" (topic: ${topic})
+
+You are given an exhaustive fact extraction. Produce a JSON knowledge object that a staff-level engineer would consider a complete teardown of this article.
+
+EXTRACTED MATERIAL:
+${factsBlock.slice(0, 60000)}
+
+Return a JSON object with these fields. If a field is not applicable to this article, return an empty array — do NOT invent content. Concepts are handled by a separate pipeline — DO NOT return a "concepts" field here.
+
+{
+  "principles": ["durable laws, heuristics, or rules-of-thumb stated or clearly implied in the article"],
+  "tradeoffs": [
+    {
+      "decision": "the design decision",
+      "optionA": "first option",
+      "optionB": "second option",
+      "axis": "what is being traded (e.g., 'reliability vs flexibility')",
+      "whenA": "when to prefer option A",
+      "whenB": "when to prefer option B"
+    }
+  ],
+  "hiddenCosts": ["gotchas, subtle costs, or surprises a first-time reader would miss"],
+  "commonMistakes": ["things practitioners typically get wrong about this topic"],
+  "whenToUse": ["conditions where the approach/technology discussed is a good fit"],
+  "whenNotToUse": ["conditions where it is a BAD fit — be specific"],
+  "mentalModels": [
+    { "name": "model name", "intuition": "think of it as...", "whyItHelps": "what misunderstanding it prevents" }
+  ],
+  "architectureFlows": [
+    { "name": "flow name", "steps": ["ordered short steps"], "purpose": "what it achieves" }
+  ],
+  "expertJudgment": [
+    { "rule": "short rule or guidance", "reason": "why this rule exists", "example": "optional concrete example" }
+  ],
+  "failureModes": [
+    { "mode": "failure mode name", "mitigation": "how to prevent or recover" }
+  ],
+  "prerequisiteMap": ["concepts the reader should already understand before this article"],
+  "furtherReading": [
+    { "title": "paper/post/book name", "why": "why it's worth reading next" }
+  ]
+}
+
+Rules:
+- Be EXHAUSTIVE on tradeoffs, hidden costs, mental models, and failure modes.
+- Do NOT pad. Only include material grounded in the extracted facts. But if the facts contain a principle, tradeoff, or gotcha, you MUST surface it.
+
+Return ONLY the JSON object.`,
+    }],
+  })
+  try {
+    const parsed = JSON.parse(extractJSON(text))
+    return {
+      principles: Array.isArray(parsed.principles) ? parsed.principles : [],
+      tradeoffs: Array.isArray(parsed.tradeoffs) ? parsed.tradeoffs as Tradeoff[] : [],
+      hiddenCosts: Array.isArray(parsed.hiddenCosts) ? parsed.hiddenCosts : [],
+      commonMistakes: Array.isArray(parsed.commonMistakes) ? parsed.commonMistakes : [],
+      whenToUse: Array.isArray(parsed.whenToUse) ? parsed.whenToUse : [],
+      whenNotToUse: Array.isArray(parsed.whenNotToUse) ? parsed.whenNotToUse : [],
+      mentalModels: Array.isArray(parsed.mentalModels) ? parsed.mentalModels as MentalModel[] : [],
+      architectureFlows: Array.isArray(parsed.architectureFlows) ? parsed.architectureFlows as ArchitectureFlow[] : [],
+      expertJudgment: Array.isArray(parsed.expertJudgment) ? parsed.expertJudgment as ExpertRule[] : [],
+      failureModes: Array.isArray(parsed.failureModes) ? parsed.failureModes : [],
+      prerequisiteMap: Array.isArray(parsed.prerequisiteMap) ? parsed.prerequisiteMap : [],
+      furtherReading: Array.isArray(parsed.furtherReading) ? parsed.furtherReading : [],
+    }
+  } catch {
+    return {}
   }
 }
 
@@ -362,10 +617,11 @@ export async function deepExtractArticle(
     `ARGUMENTS (${allFacts.arguments.length}):\n` + allFacts.arguments.map((a) => `- ${a}`).join('\n'),
     `NUMBERS (${allFacts.numbers.length}):\n` + allFacts.numbers.map((n) => `- ${n}`).join('\n'),
     `QUOTES (${allFacts.quotes.length}):\n` + allFacts.quotes.map((q) => `- ${q}`).join('\n'),
-  ].join('\n\n').slice(0, 18000)
+  ].join('\n\n').slice(0, 60000)
 
   const synth = await callOpenAI({
-    max_tokens: 4000,
+    label: 'extract.synthesize',
+    max_tokens: 8000,
     system: `You are a master extractor. You distill articles into their cream — the essence in plain, simple language — WITHOUT losing a single critical idea. The reader trusts you to do the reading for them. Be exhaustive on substance, ruthless on filler. Use **bold** for key terms.`,
     messages: [{
       role: 'user',
@@ -406,18 +662,19 @@ Return ONLY the JSON object.`,
     throw new Error('Synthesis phase failed: could not parse JSON')
   }
 
-  // Phase 4: research-only extras (skip for non-research)
+  // Phase 4a: research-only extras (skip for non-research)
   let researchExtras: Partial<_DA> = {}
   if (cls.articleType === 'research') {
-    onProgress?.('Phase 4/4: Research-paper deep dive...')
+    onProgress?.('Phase 4/5: Research-paper deep dive...')
     const rs = await callOpenAI({
-      max_tokens: 2500,
+      label: 'extract.research-extras',
+      max_tokens: 4000,
       system: `You add research-paper specific structure. Plain language. Lose no critical detail.`,
       messages: [{
         role: 'user',
         content: `Research paper: "${title}". Based on these extracted facts:
 
-${factsBlock.slice(0, 12000)}
+${factsBlock.slice(0, 40000)}
 
 Return JSON:
 {
@@ -442,7 +699,29 @@ Return ONLY JSON.`,
     }
   }
 
+  // Phase 4b: technical-expert extraction (concepts, tradeoffs, mental models,
+  // expert judgment). Runs for any technical article — research, tutorial,
+  // guide, analysis — which is the overwhelming majority of the USP surface.
+  const isTechnical = ['research', 'tutorial', 'guide', 'analysis', 'product'].includes(cls.articleType)
+  let expertExtras: Partial<_DA> = {}
+  let concepts: ExtractedConcept[] = []
+  if (isTechnical) {
+    onProgress?.('Phase 5/7: Expert layer — tradeoffs, mental models, failure modes...')
+    expertExtras = await extractExpertLayer(title, cls.topic, factsBlock)
+
+    // Two-pass exhaustive concept pipeline, running on raw content to avoid
+    // the lossy factsBlock bottleneck.
+    onProgress?.('Phase 6/7: Enumerating every concept in the article...')
+    const names = await enumerateConcepts(title, cls.topic, content)
+
+    onProgress?.(`Phase 7/7: Enriching ${names.length} concept cards...`)
+    concepts = await enrichConcepts(title, content, names)
+  }
+
   onProgress?.('Done!')
+
+  const wordCount = content.trim().split(/\s+/).length
+  const estimatedReadMinutes = Math.max(1, Math.round(wordCount / 220))
 
   const analysis: _DA = {
     articleType: cls.articleType,
@@ -453,7 +732,10 @@ Return ONLY JSON.`,
     takeaways: universal.takeaways ?? [],
     keyNumbers: universal.keyNumbers ?? [],
     quotes: universal.quotes ?? [],
+    estimatedReadMinutes,
     ...researchExtras,
+    ...expertExtras,
+    concepts,
     noveltySignals: researchExtras.noveltySignals ?? [],
     hedgingSignals: researchExtras.hedgingSignals ?? [],
     cherryPickRisks: researchExtras.cherryPickRisks ?? [],
@@ -603,6 +885,7 @@ export async function articleChat(
     : ''
 
   const text = await callOpenAI({
+    label: 'article.chat',
     system: `You are a deep knowledge assistant. You have full access to this article's content and analysis. Give thorough, insightful answers.
 
 Title: "${article.title}"

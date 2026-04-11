@@ -8,6 +8,8 @@ import type { Article, DeepAnalysis } from '../types'
 import { formatRelative, truncate } from '../lib/utils'
 import TagPill from '../components/TagPill'
 import toast from 'react-hot-toast'
+import { Readability } from '@mozilla/readability'
+import { recordLLMCall } from '../store/llmDebug'
 
 // ---------- Extraction ----------
 
@@ -17,8 +19,143 @@ const CORS_PROXIES = [
   (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
 ]
 
-async function fetchPageContent(url: string): Promise<{ title: string; content: string }> {
+// Convert article HTML to text while preserving structure (headings, lists,
+// code blocks, quotes, paragraphs). Readability alone gives us clean HTML —
+// this walker turns it into faithful plain text so nothing is collapsed.
+function htmlToStructuredText(root: Element): string {
+  const lines: string[] = []
+  const listStack: Array<'ul' | 'ol'> = []
+  const olCounters: number[] = []
+
+  const walk = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = (node.textContent ?? '').replace(/\s+/g, ' ')
+      if (t.trim()) lines[lines.length - 1] = (lines[lines.length - 1] ?? '') + t
+      return
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return
+    const el = node as Element
+    const tag = el.tagName.toLowerCase()
+
+    // Skip non-content elements
+    if (['script', 'style', 'noscript', 'iframe', 'svg', 'nav', 'footer', 'header', 'aside', 'form', 'button'].includes(tag)) return
+
+    const block = (open?: string, close?: string): void => {
+      if (open !== undefined) lines.push(open)
+      else lines.push('')
+      el.childNodes.forEach(walk)
+      if (close !== undefined) lines.push(close)
+      lines.push('')
+    }
+
+    switch (tag) {
+      case 'h1': block('# '); break
+      case 'h2': block('## '); break
+      case 'h3': block('### '); break
+      case 'h4': block('#### '); break
+      case 'h5': block('##### '); break
+      case 'h6': block('###### '); break
+      case 'p': block(''); break
+      case 'br': lines.push(''); break
+      case 'hr': lines.push(''); lines.push('---'); lines.push(''); break
+      case 'blockquote': {
+        const start = lines.length
+        block('> ')
+        // prefix every line produced for this blockquote with "> "
+        for (let i = start; i < lines.length; i++) {
+          if (lines[i] && !lines[i].startsWith('> ')) lines[i] = '> ' + lines[i]
+        }
+        break
+      }
+      case 'pre': {
+        lines.push('')
+        lines.push('```')
+        const txt = (el.textContent ?? '').replace(/\s+$/g, '')
+        txt.split('\n').forEach((l) => lines.push(l))
+        lines.push('```')
+        lines.push('')
+        break
+      }
+      case 'code': {
+        // inline code if inside paragraph; pre handled above
+        const parentTag = el.parentElement?.tagName.toLowerCase()
+        if (parentTag !== 'pre') {
+          const txt = el.textContent ?? ''
+          lines[lines.length - 1] = (lines[lines.length - 1] ?? '') + '`' + txt + '`'
+        }
+        break
+      }
+      case 'ul':
+      case 'ol': {
+        listStack.push(tag as 'ul' | 'ol')
+        if (tag === 'ol') olCounters.push(0)
+        el.childNodes.forEach(walk)
+        listStack.pop()
+        if (tag === 'ol') olCounters.pop()
+        lines.push('')
+        break
+      }
+      case 'li': {
+        const depth = Math.max(0, listStack.length - 1)
+        const indent = '  '.repeat(depth)
+        const parent = listStack[listStack.length - 1]
+        let marker = '- '
+        if (parent === 'ol') {
+          const c = ++olCounters[olCounters.length - 1]
+          marker = `${c}. `
+        }
+        lines.push(indent + marker)
+        el.childNodes.forEach(walk)
+        break
+      }
+      case 'table': {
+        // Rough table rendering — enough to keep the data intact for the LLM.
+        lines.push('')
+        const rows = Array.from(el.querySelectorAll('tr'))
+        for (const row of rows) {
+          const cells = Array.from(row.querySelectorAll('th, td'))
+            .map((c) => (c.textContent ?? '').replace(/\s+/g, ' ').trim())
+          lines.push('| ' + cells.join(' | ') + ' |')
+        }
+        lines.push('')
+        break
+      }
+      case 'a': {
+        const href = el.getAttribute('href') ?? ''
+        const txt = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+        if (txt && href && /^https?:/.test(href)) {
+          lines[lines.length - 1] = (lines[lines.length - 1] ?? '') + `[${txt}](${href})`
+        } else if (txt) {
+          lines[lines.length - 1] = (lines[lines.length - 1] ?? '') + txt
+        }
+        break
+      }
+      case 'img': {
+        const alt = el.getAttribute('alt') ?? ''
+        const src = el.getAttribute('src') ?? ''
+        if (alt || src) lines.push(`![${alt}](${src})`)
+        break
+      }
+      default:
+        // Descend into unknown containers (div, span, section, article, etc.)
+        el.childNodes.forEach(walk)
+    }
+  }
+
+  root.childNodes.forEach(walk)
+
+  // Tidy: collapse runs of >2 blank lines, trim trailing whitespace per line
+  const out = lines
+    .map((l) => l.replace(/[ \t]+$/g, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return out
+}
+
+async function fetchPageContent(url: string): Promise<{ title: string; content: string; method: string }> {
   const errors: string[] = []
+  const startedAt = Date.now()
 
   for (const buildUrl of CORS_PROXIES) {
     const proxyUrl = buildUrl(url)
@@ -32,27 +169,80 @@ async function fetchPageContent(url: string): Promise<{ title: string; content: 
       if (html.length < 200) { errors.push(`${proxyName}: too short (${html.length})`); continue }
 
       const doc = new DOMParser().parseFromString(html, 'text/html')
-      doc.querySelectorAll('script,style,nav,footer,header,aside,iframe,svg,[role="navigation"],[role="banner"],.sidebar,.comments,.ad,.social-share').forEach((el) => el.remove())
 
-      const title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()
-        ?? doc.querySelector('h1')?.textContent?.trim()
-        ?? doc.querySelector('title')?.textContent?.trim()
-        ?? url
+      // Give Readability a clone so it can mutate without affecting our doc.
+      const docClone = doc.cloneNode(true) as Document
+      // Readability needs a baseURI for resolving relative links.
+      try {
+        const base = docClone.createElement('base')
+        base.setAttribute('href', url)
+        docClone.head?.appendChild(base)
+      } catch { /* ignore */ }
 
-      const selectors = ['article','[role="main"]','main','.post-content','.article-content','.entry-content','.post-body','.article-body','.content-body','.blog-post','.post','#content','.content','.body.markup','.available-content','.single-post']
+      const reader = new Readability(docClone, {
+        charThreshold: 200,
+        keepClasses: false,
+      })
+      const parsed = reader.parse()
+
+      let title = ''
       let content = ''
-      for (const sel of selectors) {
-        const el = doc.querySelector(sel)
-        if (el) { content = el.textContent?.replace(/\s+/g, ' ').trim() ?? ''; if (content.length >= 100) break }
-      }
-      if (content.length < 100) content = doc.body?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-      if (content.length < 100) { errors.push(`${proxyName}: content too short`); continue }
+      let method = ''
 
-      return { title, content: content.slice(0, 60000) }
+      if (parsed && parsed.content) {
+        title = parsed.title?.trim()
+          || doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()
+          || doc.querySelector('h1')?.textContent?.trim()
+          || url
+        // Parse the cleaned HTML into a fragment and walk it preserving structure.
+        const container = doc.createElement('div')
+        container.innerHTML = parsed.content
+        content = htmlToStructuredText(container)
+        method = `readability via ${proxyName}`
+      } else {
+        // Fallback: structure-preserving walk over the raw document body.
+        doc.querySelectorAll('script,style,nav,footer,header,aside,iframe,svg,form,[role="navigation"],[role="banner"],.sidebar,.comments,.ad,.social-share').forEach((el) => el.remove())
+        title = doc.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()
+          || doc.querySelector('h1')?.textContent?.trim()
+          || doc.querySelector('title')?.textContent?.trim()
+          || url
+        const body = doc.body
+        content = body ? htmlToStructuredText(body) : ''
+        method = `fallback walker via ${proxyName}`
+      }
+
+      if (content.length < 100) {
+        errors.push(`${proxyName}: content too short (${content.length})`)
+        continue
+      }
+
+      recordLLMCall({
+        label: 'fetch.scrape',
+        model: method,
+        startedAt,
+        durationMs: Date.now() - startedAt,
+        messages: [{ role: 'user', content: `URL: ${url}\n\nEXTRACTED (${content.length} chars, ${content.split(/\s+/).length} words):\n\n${content}` }],
+        response: `title: ${title}\nmethod: ${method}\nhtml_size: ${html.length}\ntext_size: ${content.length}`,
+        inputChars: html.length,
+        outputChars: content.length,
+      })
+
+      return { title, content, method }
     } catch (err) {
       errors.push(`${proxyName}: ${err instanceof Error ? err.message : 'error'}`)
     }
   }
+  recordLLMCall({
+    label: 'fetch.scrape',
+    model: 'failed',
+    startedAt,
+    durationMs: Date.now() - startedAt,
+    messages: [{ role: 'user', content: `URL: ${url}` }],
+    response: '',
+    inputChars: 0,
+    outputChars: 0,
+    error: errors.join(' | '),
+  })
   throw new Error(`Extraction failed: ${errors.join(', ')}`)
 }
 

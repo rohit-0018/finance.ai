@@ -89,6 +89,46 @@ export type ArticleType =
   | 'story'
   | 'other'
 
+export type ConceptTier = 'foundational' | 'intermediate' | 'implementation' | 'expert'
+
+export interface ExtractedConcept {
+  name: string
+  tier: ConceptTier
+  oneLiner: string            // plain-language definition in one sentence
+  deepDive: string            // 2-5 sentences with mechanism/why-it-matters
+  analogy?: string            // optional mental model anchor
+  prerequisites?: string[]    // concept names that should be known first
+  relatedConcepts?: string[]  // adjacent concepts in this article
+  example?: string            // concrete real-world example from article
+}
+
+export interface Tradeoff {
+  decision: string            // the decision being made
+  optionA: string
+  optionB: string
+  axis: string                // what's being traded (e.g. "reliability vs flexibility")
+  whenA: string               // when to pick A
+  whenB: string               // when to pick B
+}
+
+export interface MentalModel {
+  name: string
+  intuition: string           // the core metaphor / "think of it as..."
+  whyItHelps: string          // what misunderstanding it prevents
+}
+
+export interface ArchitectureFlow {
+  name: string                // e.g. "RAG pipeline"
+  steps: string[]             // ordered steps, each a short phrase
+  purpose: string             // what this flow achieves
+}
+
+export interface ExpertRule {
+  rule: string                // "Don't use X for Y"
+  reason: string              // why
+  example?: string            // real-world example
+}
+
 export interface DeepAnalysis {
   // Universal (always present after deep extract)
   articleType?: ArticleType
@@ -108,6 +148,22 @@ export interface DeepAnalysis {
   implications?: string
   limitations?: string
   fieldContext?: string
+
+  // System-design / expert layer (populated when article is technical)
+  concepts?: ExtractedConcept[]
+  principles?: string[]           // durable laws/heuristics from the article
+  tradeoffs?: Tradeoff[]          // structured design decisions
+  hiddenCosts?: string[]          // gotchas a first-time reader would miss
+  commonMistakes?: string[]       // things practitioners typically get wrong
+  whenToUse?: string[]            // bullet list of "good fit" conditions
+  whenNotToUse?: string[]         // bullet list of "bad fit" conditions
+  mentalModels?: MentalModel[]
+  architectureFlows?: ArchitectureFlow[]
+  expertJudgment?: ExpertRule[]   // "it depends" wisdom
+  failureModes?: Array<{ mode: string; mitigation: string }>
+  prerequisiteMap?: string[]      // concepts reader should know first
+  furtherReading?: Array<{ title: string; why: string }>
+  estimatedReadMinutes?: number
 
   // Critical signals
   noveltySignals?: string[]

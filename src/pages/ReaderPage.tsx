@@ -13,8 +13,10 @@ import toast from 'react-hot-toast'
 
 type ReadingMode = 'researcher' | 'practitioner' | 'layperson'
 
+type StringSectionKey = 'hook' | 'coreProblem' | 'proposedSolution' | 'evidence' | 'implications' | 'limitations' | 'fieldContext' | 'tldr'
+
 const SECTION_META: Array<{
-  key: keyof Omit<DeepAnalysis, 'noveltySignals' | 'hedgingSignals' | 'cherryPickRisks' | 'readingMode'>
+  key: StringSectionKey
   label: string
   icon: string
   drillPrompt: string
@@ -227,28 +229,28 @@ const ReaderPage: React.FC = () => {
                   )
                 })}
 
-                {(analysis.noveltySignals.length > 0 || analysis.hedgingSignals.length > 0 || analysis.cherryPickRisks.length > 0) && (
+                {((analysis.noveltySignals?.length ?? 0) > 0 || (analysis.hedgingSignals?.length ?? 0) > 0 || (analysis.cherryPickRisks?.length ?? 0) > 0) && (
                   <div className="ar-signals">
                     <div className="ar-section-header">
                       <span className="ar-section-icon">🔍</span>
                       <span className="ar-section-label">Critical Signals</span>
                     </div>
-                    {analysis.noveltySignals.length > 0 && (
+                    {(analysis.noveltySignals?.length ?? 0) > 0 && (
                       <div className="ar-signal-group">
                         <div className="ar-signal-title" style={{ color: 'var(--accent)' }}>Novelty Claims</div>
-                        <div className="ar-signal-items">{analysis.noveltySignals.map((s, i) => <span key={i} className="ar-signal novelty">"{s}"</span>)}</div>
+                        <div className="ar-signal-items">{analysis.noveltySignals!.map((s, i) => <span key={i} className="ar-signal novelty">"{s}"</span>)}</div>
                       </div>
                     )}
-                    {analysis.hedgingSignals.length > 0 && (
+                    {(analysis.hedgingSignals?.length ?? 0) > 0 && (
                       <div className="ar-signal-group">
                         <div className="ar-signal-title" style={{ color: 'var(--amber)' }}>Hedging Language</div>
-                        <div className="ar-signal-items">{analysis.hedgingSignals.map((s, i) => <span key={i} className="ar-signal hedging">"{s}"</span>)}</div>
+                        <div className="ar-signal-items">{analysis.hedgingSignals!.map((s, i) => <span key={i} className="ar-signal hedging">"{s}"</span>)}</div>
                       </div>
                     )}
-                    {analysis.cherryPickRisks.length > 0 && (
+                    {(analysis.cherryPickRisks?.length ?? 0) > 0 && (
                       <div className="ar-signal-group">
                         <div className="ar-signal-title" style={{ color: 'var(--coral)' }}>Watch For</div>
-                        <div className="ar-signal-items">{analysis.cherryPickRisks.map((s, i) => <span key={i} className="ar-signal risk">{s}</span>)}</div>
+                        <div className="ar-signal-items">{analysis.cherryPickRisks!.map((s, i) => <span key={i} className="ar-signal risk">{s}</span>)}</div>
                       </div>
                     )}
                   </div>
