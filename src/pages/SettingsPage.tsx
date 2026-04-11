@@ -12,6 +12,8 @@ import {
   dbBlockUser,
   dbDeleteUser,
   dbResetPassword,
+  dbLookupUsername,
+  dbNormalizeUsers,
 } from '../lib/supabase'
 import type { User, Paper } from '../types'
 import { formatRelative } from '../lib/utils'
@@ -39,6 +41,11 @@ const AdminPage: React.FC = () => {
   const [resetUserId, setResetUserId] = useState<string | null>(null)
   const [resetPw, setResetPw] = useState('')
 
+  // Auth diagnostics
+  const [lookupInput, setLookupInput] = useState('')
+  const [lookupResult, setLookupResult] = useState<string | null>(null)
+  const [normalizing, setNormalizing] = useState(false)
+
   const { data: feeds = [] } = useFeeds()
   const deleteFeed = useDeleteFeed()
   const approveFeed = useApproveFeed()
@@ -64,13 +71,16 @@ const AdminPage: React.FC = () => {
   // ---------- User actions ----------
 
   const handleCreateUser = useCallback(async () => {
-    if (!newUsername.trim() || !newPassword.trim()) return
+    // Username is trimmed/lowercased in dbCreateUser. Password is intentionally
+    // NOT trimmed — a trailing space is a legal password character and trimming
+    // here silently broke logins when the user typed the exact same password.
+    if (!newUsername.trim() || !newPassword) return
     setCreating(true)
     try {
       const user = await dbCreateUser({
-        username: newUsername.trim(),
-        password: newPassword.trim(),
-        displayName: newDisplayName.trim(),
+        username: newUsername,
+        password: newPassword,
+        displayName: newDisplayName,
         isAdmin: newIsAdmin,
       })
       setUsers((prev) => [...prev, user])
@@ -119,9 +129,10 @@ const AdminPage: React.FC = () => {
   }, [])
 
   const handleResetPassword = useCallback(async (userId: string) => {
-    if (!resetPw.trim()) return
+    // Do NOT trim — passwords are stored exactly as entered.
+    if (!resetPw) return
     try {
-      await dbResetPassword(userId, resetPw.trim())
+      await dbResetPassword(userId, resetPw)
       setResetUserId(null)
       setResetPw('')
       toast.success('Password reset')
@@ -129,6 +140,39 @@ const AdminPage: React.FC = () => {
       toast.error(err instanceof Error ? err.message : 'Failed')
     }
   }, [resetPw])
+
+  const handleLookup = useCallback(async () => {
+    if (!lookupInput.trim()) return
+    try {
+      const r = await dbLookupUsername(lookupInput)
+      if (!r.exists) {
+        setLookupResult(`❌ No account for "${lookupInput.trim().toLowerCase()}". Create one or check the spelling.`)
+      } else {
+        setLookupResult(
+          `✅ Found: id=${r.id.slice(0, 8)}… · username="${r.username}" · display="${r.displayName ?? '—'}" · admin=${r.isAdmin} · blocked=${r.blocked}`
+        )
+      }
+    } catch (err) {
+      setLookupResult(err instanceof Error ? err.message : 'Lookup failed')
+    }
+  }, [lookupInput])
+
+  const handleNormalize = useCallback(async () => {
+    if (!window.confirm('Lowercase every username in the DB? Safe to run repeatedly. Collisions will be skipped and reported.')) return
+    setNormalizing(true)
+    try {
+      const res = await dbNormalizeUsers()
+      const skippedMsg = res.skipped.length > 0
+        ? ` · ${res.skipped.length} skipped: ${res.skipped.map((s) => `${s.username} (${s.reason})`).join('; ')}`
+        : ''
+      toast.success(`Normalized ${res.updated} username${res.updated === 1 ? '' : 's'}${skippedMsg}`)
+      loadUsers()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Normalize failed')
+    } finally {
+      setNormalizing(false)
+    }
+  }, [loadUsers])
 
   // ---------- Paper actions ----------
 
@@ -269,6 +313,34 @@ const AdminPage: React.FC = () => {
               </button>
             </div>
 
+            {/* Auth diagnostics — admin-only debugging for failed logins */}
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>Auth diagnostics</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text3)', lineHeight: 1.5 }}>
+                Usernames are stored lowercase and trimmed. Passwords are stored exactly as typed (no trimming).
+                If a user can't log in, first check the username resolves here — then use "Reset password" on their row if the password may have been mistyped.
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  placeholder="Check username (e.g. rohit)"
+                  value={lookupInput}
+                  onChange={(e) => setLookupInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleLookup() }}
+                  style={{ flex: 1, minWidth: '200px' }}
+                />
+                <button className="btn btn-sm" onClick={handleLookup} disabled={!lookupInput.trim()}>Check</button>
+                <button className="btn btn-sm" onClick={handleNormalize} disabled={normalizing}>
+                  {normalizing ? 'Normalizing…' : 'Normalize all usernames'}
+                </button>
+              </div>
+              {lookupResult && (
+                <div style={{ fontSize: '0.78rem', color: 'var(--text2)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', padding: '8px 10px', background: 'var(--bg2)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                  {lookupResult}
+                </div>
+              )}
+            </div>
+
             {showCreateUser && (
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ fontSize: '0.87rem', fontWeight: 600 }}>New User</div>
@@ -308,7 +380,7 @@ const AdminPage: React.FC = () => {
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={handleCreateUser}
-                    disabled={creating || !newUsername.trim() || !newPassword.trim()}
+                    disabled={creating || !newUsername.trim() || !newPassword}
                   >
                     {creating ? 'Creating...' : 'Create'}
                   </button>

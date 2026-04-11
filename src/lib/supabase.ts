@@ -20,12 +20,25 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 export const supabase = createClient(supabaseUrl, supabaseKey)
 
 // ---------- Auth ----------
+//
+// Normalization contract (applied in this layer, not at call sites):
+// - Usernames are lowercased and trimmed before both write and read, so
+//   "Rohit", "rohit ", and "  ROHIT " all resolve to the same account.
+// - Passwords are NEVER trimmed — a space is a legal character and silently
+//   stripping it on one side but not the other broke login in the past.
+
+function normalizeUsername(username: string): string {
+  return username.trim().toLowerCase()
+}
 
 export async function dbLogin(username: string, password: string): Promise<User> {
+  const u = normalizeUsername(username)
+  if (!u) throw new Error('Invalid username or password')
+
   const { data, error } = await supabase
     .from('users')
     .select('*')
-    .eq('username', username)
+    .eq('username', u)
     .eq('password', password)
     .maybeSingle()
 
@@ -41,14 +54,18 @@ export async function dbCreateUser(opts: {
   displayName: string
   isAdmin: boolean
 }): Promise<User> {
+  const username = normalizeUsername(opts.username)
+  if (!username) throw new Error('Username is required')
+  if (!opts.password) throw new Error('Password is required')
+
   const { data, error } = await supabase
     .from('users')
     .insert({
-      username: opts.username,
+      username,
       password: opts.password,
       is_admin: opts.isAdmin,
       blocked: false,
-      display_name: opts.displayName || opts.username,
+      display_name: opts.displayName.trim() || username,
     })
     .select()
     .single()
@@ -60,6 +77,65 @@ export async function dbCreateUser(opts: {
     throw new Error(`Failed to create user: ${error.message}`)
   }
   return data as User
+}
+
+// Admin-only diagnostic. Returns presence/state of a username WITHOUT
+// revealing the stored password. Used by the admin settings UI to debug
+// failed logins ("was the user even created?").
+export async function dbLookupUsername(username: string): Promise<
+  | { exists: false }
+  | { exists: true; id: string; username: string; displayName: string | null; isAdmin: boolean; blocked: boolean }
+> {
+  const u = normalizeUsername(username)
+  if (!u) return { exists: false }
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, username, display_name, is_admin, blocked')
+    .eq('username', u)
+    .maybeSingle()
+  if (error) throw new Error(`Lookup failed: ${error.message}`)
+  if (!data) return { exists: false }
+  return {
+    exists: true,
+    id: data.id as string,
+    username: data.username as string,
+    displayName: (data.display_name ?? null) as string | null,
+    isAdmin: data.is_admin as boolean,
+    blocked: data.blocked as boolean,
+  }
+}
+
+// One-shot backfill: lowercases every existing username. Idempotent and safe
+// to re-run. Skips rows that would collide (two users differing only in case)
+// and reports them so an admin can decide which to keep.
+export async function dbNormalizeUsers(): Promise<{ updated: number; skipped: Array<{ id: string; username: string; reason: string }> }> {
+  const { data, error } = await supabase.from('users').select('id, username')
+  if (error) throw new Error(`Normalize failed: ${error.message}`)
+  const rows = (data ?? []) as Array<{ id: string; username: string }>
+
+  const lowerCounts = new Map<string, number>()
+  for (const r of rows) {
+    const k = r.username.trim().toLowerCase()
+    lowerCounts.set(k, (lowerCounts.get(k) ?? 0) + 1)
+  }
+
+  let updated = 0
+  const skipped: Array<{ id: string; username: string; reason: string }> = []
+  for (const r of rows) {
+    const target = r.username.trim().toLowerCase()
+    if (target === r.username) continue // already normalized
+    if ((lowerCounts.get(target) ?? 0) > 1) {
+      skipped.push({ id: r.id, username: r.username, reason: 'collision — another account already has this lowercase username' })
+      continue
+    }
+    const { error: updErr } = await supabase.from('users').update({ username: target }).eq('id', r.id)
+    if (updErr) {
+      skipped.push({ id: r.id, username: r.username, reason: updErr.message })
+    } else {
+      updated++
+    }
+  }
+  return { updated, skipped }
 }
 
 export async function dbBlockUser(userId: string, blocked: boolean): Promise<void> {
