@@ -2970,19 +2970,42 @@
   position: absolute;
   top: 100%;
   right: 0;
-  margin-top: 4px;
+  margin-top: 0;
+  padding-top: 6px; /* hover bridge — keeps hover alive across the gap */
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  display: none;
+  flex-direction: column;
+  min-width: 140px;
+  z-index: 50;
+}
+.reschedule-pop::before {
+  content: '';
+  position: absolute;
+  inset: 6px 0 0 0;
   background: var(--bg2, var(--bg));
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 4px;
   box-shadow: 0 12px 28px rgba(0,0,0,0.25);
-  display: none;
-  flex-direction: column;
-  min-width: 130px;
-  z-index: 50;
+  z-index: -1;
 }
+.reschedule-pop > * {
+  position: relative;
+  margin: 0 4px;
+}
+.reschedule-pop > *:first-child { margin-top: 4px; }
+.reschedule-pop > *:last-child { margin-bottom: 4px; }
 .reschedule-menu:hover .reschedule-pop,
-.reschedule-pop:hover { display: flex; }
+.reschedule-pop:hover,
+.reschedule-menu.pinned .reschedule-pop { display: flex; }
+/* `.closed` wins over hover — used right after an action to dismiss
+   the popup even though the cursor is still inside its bounds. */
+.reschedule-menu.closed .reschedule-pop { display: none !important; }
+/* While the Custom… native date picker is open, keep the row hover
+   actions visible so the hidden input stays in layout and anchors the
+   picker. Requires :has() — supported in all current evergreen browsers. */
+.todos-row:has(.reschedule-menu.pinned) .row-hover-actions { opacity: 1; }
 .reschedule-pop button {
   background: none;
   border: none;
@@ -2995,6 +3018,32 @@
   font-family: inherit;
 }
 .reschedule-pop button:hover { background: var(--accent); color: var(--bg); }
+
+/* Reschedule trigger — prominent enough to notice, subtle enough to belong */
+.row-action.reschedule-trigger {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.row-action.reschedule-trigger:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.row-action.reschedule-trigger svg {
+  display: block;
+}
+
+/* Hidden date input paired with the Custom… button — we call
+   input.showPicker() on click so it never needs to be visible. */
+.reschedule-pop .reschedule-custom-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
 
 /* ── Floating active timer bar ──────────────────────────────────── */
 

@@ -253,7 +253,9 @@ const QuestionsPage: React.FC = () => {
       )
       let rows = page.rows
       if (filter === 'scheduled') rows = rows.filter((t) => !!t.scheduled_for || !!t.start_at)
-      if (filter === 'open') rows = rows.filter((t) => !t.scheduled_for && !t.start_at)
+      // "Open" = any unanswered question (todo/doing). Scheduled questions
+      // stay visible here — they're still open work, just with a date. The
+      // "Scheduled" chip is a narrower view for when you want only those.
       if (filter === 'todo')
         rows = rows.filter((t) => Array.isArray(t.tags) && t.tags.includes(TODO_TAG))
       if (projectFilter !== null) {
@@ -289,8 +291,11 @@ const QuestionsPage: React.FC = () => {
     for (const q of questions) {
       if (q.status === 'done') answered++
       else {
+        // Every unanswered question counts toward "Open". Scheduled ones
+        // additionally count toward "Scheduled" — the two buckets overlap
+        // by design so scheduling a question doesn't make it disappear.
+        open++
         if (q.scheduled_for || q.start_at) scheduled++
-        else open++
         if (Array.isArray(q.tags) && q.tags.includes(TODO_TAG)) todo++
       }
     }

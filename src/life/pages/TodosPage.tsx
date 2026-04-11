@@ -438,6 +438,33 @@ const TodosPage: React.FC = () => {
     setRows((r) => r.map((t) => (t.id === id ? { ...t, ...patch } : t)))
   }, [])
 
+  // Shift an ISO timestamp onto a new local date while preserving wall-clock
+  // time. Mirrors TaskEditPanel.shiftIsoToDate — see the comment there for
+  // why we must move start_at/due_at together with scheduled_for.
+  const shiftIsoToDate = (iso: string | null | undefined, newDateLocal: string): string | null => {
+    if (!iso) return iso ?? null
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    const ss = String(d.getSeconds()).padStart(2, '0')
+    return new Date(`${newDateLocal}T${hh}:${mm}:${ss}`).toISOString()
+  }
+
+  const buildReschedulePatch = (
+    task: LifeTask,
+    newDate: string | null
+  ): Partial<LifeTask> => {
+    if (newDate === null) {
+      return { scheduled_for: null, start_at: null, due_at: null }
+    }
+    return {
+      scheduled_for: newDate,
+      start_at: task.start_at ? shiftIsoToDate(task.start_at, newDate) : null,
+      due_at: task.due_at ? shiftIsoToDate(task.due_at, newDate) : null,
+    }
+  }
+
   // ── Quick reschedule (used by row hover menu) ──
   const quickReschedule = async (
     task: LifeTask,
@@ -452,15 +479,29 @@ const TodosPage: React.FC = () => {
       if (target === 'next-week') d.setDate(d.getDate() + 7)
       date = d.toISOString().slice(0, 10)
     }
-    setRows((r) =>
-      r.map((t) => (t.id === task.id ? { ...t, scheduled_for: date } : t))
-    )
+    const patch = buildReschedulePatch(task, date)
+    setRows((r) => r.map((t) => (t.id === task.id ? { ...t, ...patch } : t)))
     try {
-      await updateTask(lifeUser.id, task.id, { scheduled_for: date })
+      await updateTask(lifeUser.id, task.id, patch)
     } catch (err) {
       setError(`Reschedule failed: ${(err as Error).message}`)
       load()
     }
+  }
+
+  // Dismiss the hover popup after an action. Adds `.closed` (CSS forces
+  // display:none even while :hover), and clears it on the next mouseleave
+  // so the menu can reopen on the next hover.
+  const dismissReschedulePop = (el: HTMLElement | null) => {
+    const menu = el?.closest('.reschedule-menu') as HTMLElement | null
+    if (!menu) return
+    menu.classList.remove('pinned')
+    menu.classList.add('closed')
+    const onLeave = () => {
+      menu.classList.remove('closed')
+      menu.removeEventListener('mouseleave', onLeave)
+    }
+    menu.addEventListener('mouseleave', onLeave)
   }
 
   // ── Timer handlers (single global active timer) ──
@@ -505,11 +546,10 @@ const TodosPage: React.FC = () => {
   const editDate = async (task: LifeTask, value: string) => {
     if (!lifeUser) return
     const newDate = value || null
-    setRows((r) =>
-      r.map((t) => (t.id === task.id ? { ...t, scheduled_for: newDate } : t))
-    )
+    const patch = buildReschedulePatch(task, newDate)
+    setRows((r) => r.map((t) => (t.id === task.id ? { ...t, ...patch } : t)))
     try {
-      await updateTask(lifeUser.id, task.id, { scheduled_for: newDate })
+      await updateTask(lifeUser.id, task.id, patch)
     } catch (err) {
       setError((err as Error).message)
     }
@@ -1108,18 +1148,59 @@ const TodosPage: React.FC = () => {
                         {/* Quick reschedule menu */}
                         <div className="reschedule-menu">
                           <button
-                            className="row-action"
+                            className="row-action reschedule-trigger"
                             title="Reschedule"
                             onClick={(e) => e.preventDefault()}
+                            aria-label="Reschedule"
                           >
-                            ⟳
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+                              <rect x="3" y="4" width="18" height="18" rx="2" />
+                              <line x1="16" y1="2" x2="16" y2="6" />
+                              <line x1="8" y1="2" x2="8" y2="6" />
+                              <line x1="3" y1="10" x2="21" y2="10" />
+                            </svg>
                           </button>
                           <div className="reschedule-pop">
-                            <button onClick={() => quickReschedule(task, 'yesterday')}>Yesterday</button>
-                            <button onClick={() => quickReschedule(task, 'today')}>Today</button>
-                            <button onClick={() => quickReschedule(task, 'tomorrow')}>Tomorrow</button>
-                            <button onClick={() => quickReschedule(task, 'next-week')}>+1 week</button>
-                            <button onClick={() => quickReschedule(task, 'clear')}>Clear</button>
+                            <button onClick={(e) => { quickReschedule(task, 'yesterday'); dismissReschedulePop(e.currentTarget) }}>Yesterday</button>
+                            <button onClick={(e) => { quickReschedule(task, 'today'); dismissReschedulePop(e.currentTarget) }}>Today</button>
+                            <button onClick={(e) => { quickReschedule(task, 'tomorrow'); dismissReschedulePop(e.currentTarget) }}>Tomorrow</button>
+                            <button onClick={(e) => { quickReschedule(task, 'next-week'); dismissReschedulePop(e.currentTarget) }}>+1 week</button>
+                            <button
+                              className="reschedule-custom"
+                              onClick={(e) => {
+                                const menu = e.currentTarget.closest('.reschedule-menu') as HTMLElement | null
+                                const input = menu?.querySelector<HTMLInputElement>(
+                                  'input.reschedule-custom-input'
+                                )
+                                if (!menu || !input) return
+                                // Pin the popup open so it survives mouse-leave while
+                                // the native picker is up. Unpin on blur or after a
+                                // date is chosen (onChange fires before blur).
+                                menu.classList.add('pinned')
+                                const unpin = () => {
+                                  menu.classList.remove('pinned')
+                                  input.removeEventListener('blur', unpin)
+                                }
+                                input.addEventListener('blur', unpin)
+                                if (typeof input.showPicker === 'function') {
+                                  try { input.showPicker() } catch { input.focus() }
+                                } else {
+                                  input.focus()
+                                }
+                              }}
+                            >
+                              Custom…
+                            </button>
+                            <input
+                              className="reschedule-custom-input"
+                              type="date"
+                              value={task.scheduled_for ?? ''}
+                              onChange={(e) => {
+                                if (e.target.value) editDate(task, e.target.value)
+                                dismissReschedulePop(e.currentTarget)
+                              }}
+                            />
+                            <button onClick={(e) => { quickReschedule(task, 'clear'); dismissReschedulePop(e.currentTarget) }}>Clear</button>
                           </div>
                         </div>
                         {/* Timer */}
