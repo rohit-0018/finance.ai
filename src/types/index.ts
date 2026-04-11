@@ -2,6 +2,10 @@ export type ReadStatus = 'unread' | 'reading' | 'done'
 export type NoteType = 'note' | 'insight' | 'question' | 'highlight'
 export type PaperSource = 'arXiv' | 'SSRN' | 'HuggingFace' | 'NeurIPS' | 'ICML' | 'ICLR' | 'RSS' | 'Article' | string
 
+export interface UserPreferences {
+  nav_hidden?: string[]
+}
+
 export interface User {
   id: string
   username: string
@@ -9,6 +13,7 @@ export interface User {
   is_admin: boolean
   blocked: boolean
   display_name: string | null
+  preferences?: UserPreferences
   created_at: string
 }
 
@@ -31,6 +36,7 @@ export interface Paper {
   analysis: DeepAnalysis | null
   added_by: string | null
   approved: boolean
+  marked_for_reading?: boolean
   fetched_at: string
   created_at: string
 }
@@ -191,6 +197,8 @@ export interface Article {
   added_by: string | null
   is_private: boolean
   approved: boolean
+  marked_for_reading?: boolean
+  archived?: boolean
   created_at: string
   uploader?: Uploader | null
 }

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
-import { dbGetArticles, dbSaveArticle, dbDeleteArticle } from '../lib/supabase'
+import { dbGetArticles, dbSaveArticle, dbDeleteArticle, dbToggleReaderPick, dbArchiveArticle } from '../lib/supabase'
 import { deepExtractArticle } from '../lib/anthropic'
 import { UploaderBadge } from '../components/Avatar'
 import type { Article, DeepAnalysis } from '../types'
@@ -250,7 +250,14 @@ async function fetchPageContent(url: string): Promise<{ title: string; content: 
 
 interface IngestResult { url: string; status: 'success' | 'error'; message: string }
 
-const ArticlesPage: React.FC = () => {
+interface ArticlesPageProps {
+  // When rendered inside Life's chrome we hide the "+ Add Articles" banner
+  // so the life page stays focused on reading, not ingest. The papermind
+  // articles route still shows it.
+  hideIngest?: boolean
+}
+
+const ArticlesPage: React.FC<ArticlesPageProps> = ({ hideIngest = false }) => {
   const navigate = useNavigate()
   const userId = useAppStore((s) => s.currentUser?.id)
   const isAdmin = useAppStore((s) => s.isAdmin)
@@ -319,11 +326,19 @@ const ArticlesPage: React.FC = () => {
   }, [urls, userId, makePrivate, isAdmin])
 
   const handleDelete = useCallback(async (id: string) => {
-    if (!window.confirm('Delete this article?')) return
+    if (!window.confirm('Delete this article permanently? This cannot be undone.')) return
     try {
       await dbDeleteArticle(id)
       setArticles((prev) => prev.filter((a) => a.id !== id))
       toast.success('Deleted')
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+  }, [])
+
+  const handleArchive = useCallback(async (id: string) => {
+    try {
+      await dbArchiveArticle(id, true)
+      setArticles((prev) => prev.filter((a) => a.id !== id))
+      toast.success('Archived — hidden from your feed')
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
   }, [])
 
@@ -336,22 +351,24 @@ const ArticlesPage: React.FC = () => {
 
   return (
     <>
-      <div className="page-header">
-        <div className="page-title">Articles</div>
-        <div className="page-actions">
-          {isAdmin() && (
-            <button className="btn btn-sm" onClick={() => navigate('/admin/articles')}>
-              Approval queue
+      {!hideIngest && (
+        <div className="page-header">
+          <div className="page-title">Articles</div>
+          <div className="page-actions">
+            {isAdmin() && (
+              <button className="btn btn-sm" onClick={() => navigate('/admin/articles')}>
+                Approval queue
+              </button>
+            )}
+            <button className="btn btn-primary" onClick={() => setShowIngest(!showIngest)}>
+              {showIngest ? 'Close' : '+ Add Articles'}
             </button>
-          )}
-          <button className="btn btn-primary" onClick={() => setShowIngest(!showIngest)}>
-            {showIngest ? 'Close' : '+ Add Articles'}
-          </button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Ingest panel — open to all signed-in users */}
-      {showIngest && (
+      {/* Ingest panel — open to all signed-in users, hidden inside Life */}
+      {!hideIngest && showIngest && (
         <div className="al-ingest">
           <div className="al-ingest-inner">
             <div className="al-ingest-label">Paste article URLs (one per line)</div>
@@ -430,7 +447,7 @@ const ArticlesPage: React.FC = () => {
             <>
               {unanalyzed.length > 0 && <div className="al-section-label">Deep Reads</div>}
               {analyzed.map((article) => (
-                <ArticleCard key={article.id} article={article} navigate={navigate} isAdmin={isAdmin()} onDelete={handleDelete} />
+                <ArticleCard key={article.id} article={article} navigate={navigate} isAdmin={isAdmin()} onDelete={handleDelete} onArchive={handleArchive} />
               ))}
             </>
           )}
@@ -438,7 +455,7 @@ const ArticlesPage: React.FC = () => {
             <>
               {analyzed.length > 0 && <div className="al-section-label">Unanalyzed</div>}
               {unanalyzed.map((article) => (
-                <ArticleCard key={article.id} article={article} navigate={navigate} isAdmin={isAdmin()} onDelete={handleDelete} />
+                <ArticleCard key={article.id} article={article} navigate={navigate} isAdmin={isAdmin()} onDelete={handleDelete} onArchive={handleArchive} />
               ))}
             </>
           )}
@@ -455,12 +472,32 @@ const ArticleCard: React.FC<{
   navigate: ReturnType<typeof useNavigate>
   isAdmin: boolean
   onDelete: (id: string) => void
-}> = ({ article, navigate, isAdmin, onDelete }) => {
+  onArchive: (id: string) => void
+}> = ({ article, navigate, isAdmin, onDelete, onArchive }) => {
   const analysis = article.analysis as DeepAnalysis | null
   const domain = (() => { try { return new URL(article.url).hostname.replace('www.', '') } catch { return '' } })()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [marked, setMarked] = useState<boolean>(!!article.marked_for_reading)
+
+  const handleToggleReader = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setMenuOpen(false)
+    const next = !marked
+    setMarked(next)
+    try {
+      await dbToggleReaderPick('article', article.id, next)
+      toast.success(next ? 'Added to reader feed' : 'Removed from reader feed')
+    } catch (err) {
+      setMarked(!next)
+      toast.error((err as Error).message)
+    }
+  }
 
   return (
-    <div className="al-card" onClick={() => navigate(`/article/${article.id}`)}>
+    <div
+      className={`al-card${menuOpen ? ' menu-open' : ''}`}
+      onClick={() => navigate(`/article/${article.id}`)}
+    >
       {/* Top: domain + date */}
       <div className="al-card-top">
         <span className="al-card-domain">{domain}</span>
@@ -508,16 +545,65 @@ const ArticleCard: React.FC<{
           {!article.is_private && !article.approved && (
             <span className="al-card-badge pending" title="Awaiting admin approval">Pending review</span>
           )}
+          {marked && (
+            <span className="al-card-badge" style={{ background: 'linear-gradient(135deg,#f093fb,#f5576c)', color: '#fff' }}>In Reader</span>
+          )}
         </div>
         <div className="al-card-actions">
           <a href={article.url} target="_blank" rel="noopener noreferrer" className="al-card-link" onClick={(e) => e.stopPropagation()}>
             Source
           </a>
-          {isAdmin && (
-            <button className="al-card-link danger" onClick={(e) => { e.stopPropagation(); onDelete(article.id) }}>
-              Delete
+          <div className="card-menu-wrap">
+            <button
+              className={`card-menu-btn${marked ? ' marked' : ''}`}
+              onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v) }}
+              aria-label="More"
+              title="More"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" />
+              </svg>
             </button>
-          )}
+            {menuOpen && (
+              <>
+                <div
+                  className="card-menu-scrim"
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(false) }}
+                />
+                <div className="card-menu" role="menu">
+                  <button
+                    className={`card-menu-item${marked ? ' active' : ''}`}
+                    role="menuitem"
+                    onClick={handleToggleReader}
+                  >
+                    <span className="card-menu-icon">{marked ? '✓' : '📖'}</span>
+                    <span>{marked ? 'In reader feed' : 'Choose for reading'}</span>
+                  </button>
+                  <button
+                    className="card-menu-item"
+                    role="menuitem"
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchive(article.id) }}
+                  >
+                    <span className="card-menu-icon">📥</span>
+                    <span>Archive (hide from feed)</span>
+                  </button>
+                  {isAdmin && (
+                    <>
+                      <div className="card-menu-divider" />
+                      <button
+                        className="card-menu-item danger"
+                        role="menuitem"
+                        onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(article.id) }}
+                      >
+                        <span className="card-menu-icon">🗑</span>
+                        <span>Delete permanently</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -1,10 +1,12 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import type { Paper, DeepAnalysis } from '../types'
 import { truncate } from '../lib/utils'
 import TagPill from './TagPill'
 import { useAppStore } from '../store'
 import { useToggleSave } from '../hooks/useSaved'
+import { dbToggleReaderPick } from '../lib/supabase'
 
 interface PaperCardProps {
   paper: Paper
@@ -16,6 +18,25 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
   const isSaved = savedIds.has(paper.id)
   const toggleSave = useToggleSave()
   const analysis = paper.analysis as DeepAnalysis | null
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [marked, setMarked] = useState<boolean>(!!paper.marked_for_reading)
+
+  const handleToggleReader = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation()
+      setMenuOpen(false)
+      const next = !marked
+      setMarked(next)
+      try {
+        await dbToggleReaderPick('paper', paper.id, next)
+        toast.success(next ? 'Added to reader feed' : 'Removed from reader feed')
+      } catch (err) {
+        setMarked(!next)
+        toast.error((err as Error).message)
+      }
+    },
+    [paper.id, marked]
+  )
 
   const handleSave = useCallback(
     (e: React.MouseEvent) => {
@@ -30,7 +51,7 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
   }, [navigate, paper.id])
 
   return (
-    <div className="card paper-card" onClick={handleClick}>
+    <div className={`card paper-card${menuOpen ? ' menu-open' : ''}`} onClick={handleClick}>
       <div className="paper-card-header">
         <div className="paper-card-title">{paper.title}</div>
       </div>
@@ -51,6 +72,7 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
         <div className="paper-card-badges">
           {analysis && <span className="al-card-badge analyzed">Deep Read</span>}
           {isSaved && <span className="al-card-badge" style={{ background: 'var(--accent-light)', color: 'var(--accent)' }}>Saved</span>}
+          {marked && <span className="al-card-badge" style={{ background: 'linear-gradient(135deg,#f093fb,#f5576c)', color: '#fff' }}>In Reader</span>}
         </div>
         <div className="paper-card-btns">
           <button
@@ -62,6 +84,36 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper }) => {
               <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" />
             </svg>
           </button>
+          <div className="card-menu-wrap">
+            <button
+              className={`card-menu-btn${marked ? ' marked' : ''}`}
+              onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v) }}
+              title="More"
+              aria-label="More"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" />
+              </svg>
+            </button>
+            {menuOpen && (
+              <>
+                <div
+                  className="card-menu-scrim"
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(false) }}
+                />
+                <div className="card-menu" role="menu">
+                  <button
+                    className={`card-menu-item${marked ? ' active' : ''}`}
+                    role="menuitem"
+                    onClick={handleToggleReader}
+                  >
+                    <span className="card-menu-icon">{marked ? '✓' : '📖'}</span>
+                    <span>{marked ? 'In reader feed' : 'Choose for reading'}</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

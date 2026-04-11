@@ -12,6 +12,7 @@ import type {
   Article,
   UserTopic,
   DailyBrief,
+  DeepAnalysis,
 } from '../types'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -173,6 +174,33 @@ export async function dbGetAllUsers(): Promise<User[]> {
 
   if (error) throw new Error(`Failed to fetch users: ${error.message}`)
   return (data ?? []) as User[]
+}
+
+// Patches user preferences (jsonb). Merges the given keys into existing
+// preferences — we read-modify-write on the client since the jsonb blob is
+// small and there's no concurrent-writer story for per-user settings.
+export async function dbUpdateUserPreferences(
+  userId: string,
+  patch: import('../types').UserPreferences
+): Promise<import('../types').UserPreferences> {
+  const { data: existing, error: readErr } = await supabase
+    .from('users')
+    .select('preferences')
+    .eq('id', userId)
+    .maybeSingle()
+  if (readErr) throw new Error(`Failed to read preferences: ${readErr.message}`)
+
+  const merged = {
+    ...((existing?.preferences as import('../types').UserPreferences | null) ?? {}),
+    ...patch,
+  }
+
+  const { error } = await supabase
+    .from('users')
+    .update({ preferences: merged })
+    .eq('id', userId)
+  if (error) throw new Error(`Failed to save preferences: ${error.message}`)
+  return merged
 }
 
 export async function dbToggleAdmin(userId: string, isAdmin: boolean): Promise<void> {
@@ -614,11 +642,18 @@ async function attachUploaders(articles: Article[]): Promise<Article[]> {
 export async function dbGetArticles(opts?: {
   currentUserId?: string | null
   isAdmin?: boolean
+  includeArchived?: boolean
 }): Promise<Article[]> {
   let query = supabase
     .from('articles')
     .select('*')
     .order('created_at', { ascending: false })
+
+  // Archived articles are hidden from the default feed for everyone —
+  // admin included. Pass includeArchived to see them.
+  if (!opts?.includeArchived) {
+    query = query.eq('archived', false)
+  }
 
   if (!opts?.isAdmin) {
     const uid = opts?.currentUserId ?? null
@@ -690,6 +725,107 @@ export async function dbUpdateArticleAnalysis(id: string, analysis: unknown, sum
 export async function dbDeleteArticle(id: string): Promise<void> {
   const { error } = await supabase.from('articles').delete().eq('id', id)
   if (error) throw new Error(`Failed to delete article: ${error.message}`)
+}
+
+export async function dbArchiveArticle(id: string, archived: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('articles')
+    .update({ archived })
+    .eq('id', id)
+  if (error) throw new Error(`Failed to archive article: ${error.message}`)
+}
+
+// ---------- Reader Feed ----------
+// A single toggle (`marked_for_reading`) on both articles and papers drives
+// the distraction-free reader feed under /life/reader. Toggle from any card
+// via the "Choose for reading" 2-dot menu option.
+
+export type ReaderKind = 'article' | 'paper'
+
+export interface ReaderItem {
+  kind: ReaderKind
+  id: string
+  title: string
+  // Pre-computed gist pulled from existing summary fields — the reader never
+  // re-summarizes. Articles use summary / analysis.tldr; papers use
+  // analysis.tldr / finding / abstract.
+  gist: string
+  source: string        // domain for articles, "arXiv"/etc for papers
+  topic: string
+  tags: string[]
+  url: string | null
+  created_at: string
+}
+
+export async function dbToggleReaderPick(
+  kind: ReaderKind,
+  id: string,
+  picked: boolean
+): Promise<void> {
+  const table = kind === 'article' ? 'articles' : 'papers'
+  const { error } = await supabase
+    .from(table)
+    .update({ marked_for_reading: picked })
+    .eq('id', id)
+  if (error) throw new Error(`Failed to toggle reader pick: ${error.message}`)
+}
+
+export async function dbGetReaderFeed(limit = 100): Promise<ReaderItem[]> {
+  const [articlesRes, papersRes] = await Promise.all([
+    supabase
+      .from('articles')
+      .select('id, url, title, summary, topic, tags, analysis, created_at')
+      .eq('marked_for_reading', true)
+      .order('created_at', { ascending: false })
+      .limit(limit),
+    supabase
+      .from('papers')
+      .select('id, url, title, abstract, finding, topic, tags, source, analysis, fetched_at')
+      .eq('marked_for_reading', true)
+      .order('fetched_at', { ascending: false })
+      .limit(limit),
+  ])
+  if (articlesRes.error) throw new Error(`Reader feed (articles): ${articlesRes.error.message}`)
+  if (papersRes.error) throw new Error(`Reader feed (papers): ${papersRes.error.message}`)
+
+  const articleItems: ReaderItem[] = (articlesRes.data ?? []).map((a: Record<string, unknown>) => {
+    const analysis = a.analysis as DeepAnalysis | null
+    const domain = (() => {
+      try { return new URL(a.url as string).hostname.replace('www.', '') } catch { return '' }
+    })()
+    return {
+      kind: 'article' as const,
+      id: a.id as string,
+      title: a.title as string,
+      gist: (analysis?.tldr || (a.summary as string | null) || 'No summary available.').trim(),
+      source: domain || 'web',
+      topic: (a.topic as string) ?? 'General',
+      tags: ((a.tags as string[]) ?? []).slice(0, 4),
+      url: (a.url as string) ?? null,
+      created_at: a.created_at as string,
+    }
+  })
+
+  const paperItems: ReaderItem[] = (papersRes.data ?? []).map((p: Record<string, unknown>) => {
+    const analysis = p.analysis as DeepAnalysis | null
+    const gist = (analysis?.tldr || (p.finding as string | null) || (p.abstract as string | null) || 'No summary.').trim()
+    return {
+      kind: 'paper' as const,
+      id: p.id as string,
+      title: p.title as string,
+      gist,
+      source: (p.source as string) ?? 'arXiv',
+      topic: (p.topic as string) ?? 'AI',
+      tags: ((p.tags as string[]) ?? []).slice(0, 4),
+      url: (p.url as string) ?? null,
+      created_at: p.fetched_at as string,
+    }
+  })
+
+  // Interleave newest-first across both sources so the feed doesn't clump.
+  return [...articleItems, ...paperItems].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
 }
 
 // ---------- User Topics ----------

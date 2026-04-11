@@ -1,6 +1,7 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAppStore, type ThemeId } from '../store'
+import { useHiddenNav } from '../lib/navHidden'
 
 const THEMES: Array<{ id: ThemeId; label: string; dot: string }> = [
   { id: 'light', label: 'Light', dot: '#ffffff' },
@@ -54,6 +55,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const theme = useAppStore((s) => s.theme)
   const setTheme = useAppStore((s) => s.setTheme)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [hiddenNav] = useHiddenNav()
 
   useEffect(() => {
     setMobileOpen(false)
@@ -73,21 +75,25 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }, [logout, navigate])
 
   const navItems = useMemo(() => {
+    const admin = isAdmin()
     const items = [
       { path: '/', label: 'Feed', icon: 'grid' },
-      { path: '/articles', label: 'Articles', icon: 'file-text' },
+      // Articles is hidden for admins in the main papermind sidebar — they
+      // reach it from Life → Read → Articles instead. Regular users still
+      // see it here.
+      ...(admin ? [] : [{ path: '/articles', label: 'Articles', icon: 'file-text' }]),
       { path: '/saved', label: 'Saved', icon: 'bookmark' },
       { path: '/notes', label: 'Notes', icon: 'edit' },
       { path: '/interests', label: 'Interests', icon: 'star' },
       { path: '/feeds', label: 'Feeds', icon: 'rss' },
     ]
-    if (isAdmin()) {
+    if (admin) {
       items.push({ path: '/admin/articles', label: 'Approvals', icon: 'check' })
       items.push({ path: '/life', label: 'Life', icon: 'sun' })
       items.push({ path: '/admin', label: 'Admin', icon: 'settings' })
     }
-    return items
-  }, [isAdmin])
+    return items.filter((i) => !hiddenNav.includes(i.path))
+  }, [isAdmin, hiddenNav])
 
   const userInitial = currentUser?.display_name?.[0] ?? currentUser?.username?.[0] ?? '?'
 

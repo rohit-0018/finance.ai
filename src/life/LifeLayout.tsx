@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store'
+import { useHiddenNav } from '../lib/navHidden'
 import { useLifeStore } from './store'
 import {
   ensureLifeUser,
@@ -58,6 +59,14 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Money',
     items: [
       { path: '/life/finance', label: 'Finance', icon: <Icon kind="wallet" /> },
+    ],
+  },
+  {
+    id: 'read',
+    label: 'Read',
+    items: [
+      { path: '/life/articles', label: 'Articles', icon: <Icon kind="edit" /> },
+      { path: '/life/reader', label: 'Reader', icon: <Icon kind="book" /> },
     ],
   },
   {
@@ -120,6 +129,10 @@ function Icon({ kind }: { kind: string }) {
       return (<svg {...p}><circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" /></svg>)
     case 'grid':
       return (<svg {...p}><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></svg>)
+    case 'settings':
+      // Simple sliders/tune icon — reliable across all themes and renders
+      // cleanly at 16px unlike a complex multi-path gear.
+      return (<svg {...p}><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></svg>)
     default:
       return null
   }
@@ -151,6 +164,13 @@ const LifeLayout: React.FC<LifeLayoutProps> = ({ title, children }) => {
   const [alignment, setAlignment] = useState<AlignmentSnapshot | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [overflowOpen, setOverflowOpen] = useState(false)
+  const [navSettingsOpen, setNavSettingsOpen] = useState(false)
+  // Admin control: hide nav items from both sidebars. Shared across
+  // Layout.tsx and LifeLayout via a single localStorage key.
+  const [hiddenNav, saveHiddenNav] = useHiddenNav()
+  const visibleGroups = NAV_GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((i) => !hiddenNav.includes(i.path)) }))
+    .filter((g) => g.items.length > 0)
   const todayTasksRef = useRef<LifeTask[]>([])
 
   // Auto-close drawer/overflow on route change so navigation feels snappy on mobile.
@@ -391,6 +411,14 @@ LIFE_DATABASE_URL=postgresql://...`}
         <span className="dot" />
         <span>Life</span>
         <button
+          className="life-nav-settings-btn"
+          aria-label="Nav visibility"
+          title="Choose which sections appear here"
+          onClick={() => setNavSettingsOpen(true)}
+        >
+          <Icon kind="settings" />
+        </button>
+        <button
           className="life-drawer-close"
           aria-label="Close menu"
           onClick={() => setDrawerOpen(false)}
@@ -403,7 +431,7 @@ LIFE_DATABASE_URL=postgresql://...`}
       <WorkspaceSwitcher />
 
       <nav className="life-nav" aria-label="Life sections">
-        {NAV_GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <div className="life-nav-group" key={group.id}>
             <div className="life-nav-group-label">{group.label}</div>
             {group.items.map((item) => {
@@ -609,7 +637,110 @@ LIFE_DATABASE_URL=postgresql://...`}
 
       <AgentDock />
       {eodOpen && <EodModal onClose={() => setEodOpen(false)} />}
+      {navSettingsOpen && (
+        <NavVisibilityModal
+          hidden={hiddenNav}
+          onChange={saveHiddenNav}
+          onClose={() => setNavSettingsOpen(false)}
+        />
+      )}
     </div>
+  )
+}
+
+// Main papermind nav items. Mirrors Layout.tsx's admin navItems so the
+// admin can toggle visibility of the entire papermind sidebar from inside
+// Life. Articles is intentionally absent — for admins it only appears
+// under Life → Read → Articles.
+const MAIN_NAV_ITEMS: NavItem[] = [
+  { path: '/', label: 'Feed', icon: null },
+  { path: '/saved', label: 'Saved', icon: null },
+  { path: '/notes', label: 'Notes', icon: null },
+  { path: '/interests', label: 'Interests', icon: null },
+  { path: '/feeds', label: 'Feeds', icon: null },
+  { path: '/admin/articles', label: 'Approvals', icon: null },
+  { path: '/life', label: 'Life', icon: null },
+  { path: '/admin', label: 'Admin', icon: null },
+]
+
+// Admin nav visibility — toggles which items show up in BOTH the main
+// papermind sidebar and the Life sidebar / mobile drawer. Persisted via
+// useHiddenNav → localStorage. Pages stay reachable by URL even when hidden.
+const NavVisibilityModal: React.FC<{
+  hidden: string[]
+  onChange: (next: string[]) => void
+  onClose: () => void
+}> = ({ hidden, onChange, onClose }) => {
+  const toggle = (path: string) => {
+    onChange(hidden.includes(path) ? hidden.filter((p) => p !== path) : [...hidden, path])
+  }
+  const Row = ({ path, label }: { path: string; label: string }) => {
+    const visible = !hidden.includes(path)
+    return (
+      <label className={`life-nav-modal-row${visible ? '' : ' off'}`}>
+        <span className="life-nav-modal-row-label">{label}</span>
+        <span className={`life-nav-modal-switch${visible ? ' on' : ''}`}>
+          <input
+            type="checkbox"
+            checked={visible}
+            onChange={() => toggle(path)}
+          />
+          <span className="life-nav-modal-switch-track">
+            <span className="life-nav-modal-switch-thumb" />
+          </span>
+        </span>
+      </label>
+    )
+  }
+
+  return createPortal(
+    <div className="life-nav-modal-backdrop" onClick={onClose}>
+      <div className="life-nav-modal" onClick={(e) => e.stopPropagation()} role="dialog">
+        <div className="life-nav-modal-header">
+          <div>
+            <h3>Navigation visibility</h3>
+            <p className="life-nav-modal-hint">
+              Hide any section from the sidebars. Pages stay reachable by URL.
+            </p>
+          </div>
+          <button className="life-nav-modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        <div className="life-nav-modal-body">
+          <div className="life-nav-modal-group">
+            <div className="life-nav-modal-group-label life-nav-modal-group-papermind">
+              Papermind
+            </div>
+            {MAIN_NAV_ITEMS.map((item) => (
+              <Row key={item.path} path={item.path} label={item.label} />
+            ))}
+          </div>
+
+          {NAV_GROUPS.map((group) => (
+            <div key={group.id} className="life-nav-modal-group">
+              <div className="life-nav-modal-group-label life-nav-modal-group-life">
+                Life · {group.label}
+              </div>
+              {group.items.map((item) => (
+                <Row key={item.path} path={item.path} label={item.label} />
+              ))}
+            </div>
+          ))}
+        </div>
+
+        <div className="life-nav-modal-footer">
+          <button className="life-nav-modal-ghost" onClick={() => onChange([])}>
+            Show all
+          </button>
+          <button className="life-nav-modal-primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 

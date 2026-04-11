@@ -24,6 +24,8 @@ const MemoryPage = lazy(() => import('./pages/MemoryPage'))
 const WeeklyOneOnePage = lazy(() => import('./pages/WeeklyOneOnePage'))
 const EulogyPage = lazy(() => import('./pages/EulogyPage'))
 const RitualPage = lazy(() => import('./pages/RitualPage'))
+const ReaderPage = lazy(() => import('./pages/ReaderPage'))
+const LifeArticlesPage = lazy(() => import('./pages/LifeArticlesPage'))
 
 const Loading: React.FC = () => (
   <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted, #888)' }}>
@@ -56,6 +58,8 @@ const LifeApp: React.FC = () => (
       <Route path="weekly-1-1" element={<WeeklyOneOnePage />} />
       <Route path="eulogy" element={<EulogyPage />} />
       <Route path="ritual" element={<RitualPage />} />
+      <Route path="reader" element={<ReaderPage />} />
+      <Route path="articles" element={<LifeArticlesPage />} />
       <Route path="*" element={<Navigate to="/life" replace />} />
     </Routes>
   </Suspense>
