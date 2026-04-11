@@ -62,6 +62,65 @@ function emptyPlan(): PlanSnapshot {
   }
 }
 
+// Agent-produced (or stored) snapshots can be partial/malformed — missing
+// pre_mortem, missing tasks, wrong nested shape. Rendering those directly
+// throws in PlanTaskRow / pre-mortem fields and nukes the whole page because
+// there's no error boundary above us. Normalize every snapshot through this
+// merge so the UI always sees a fully-formed shape.
+function normalizePlan(raw: unknown): PlanSnapshot {
+  const base = emptyPlan()
+  if (!raw || typeof raw !== 'object') return base
+  const r = raw as Partial<PlanSnapshot> & { pre_mortem?: Partial<PlanSnapshot['pre_mortem']> }
+  return {
+    definition_of_done:
+      typeof r.definition_of_done === 'string' ? r.definition_of_done : base.definition_of_done,
+    milestones: Array.isArray(r.milestones) ? r.milestones : base.milestones,
+    tasks: Array.isArray(r.tasks)
+      ? r.tasks.map((t) => ({
+          ...(t ?? {}),
+          title: typeof (t as PlanSnapshotTask)?.title === 'string' ? (t as PlanSnapshotTask).title : '',
+        })) as PlanSnapshot['tasks']
+      : base.tasks,
+    risks: Array.isArray(r.risks) ? r.risks : base.risks,
+    pre_mortem: {
+      why_fail: typeof r.pre_mortem?.why_fail === 'string' ? r.pre_mortem.why_fail : '',
+      smallest_version:
+        typeof r.pre_mortem?.smallest_version === 'string' ? r.pre_mortem.smallest_version : '',
+      first_cut: typeof r.pre_mortem?.first_cut === 'string' ? r.pre_mortem.first_cut : '',
+    },
+  }
+}
+
+// Minimal error boundary — class component because React still has no hook
+// equivalent. Catches render errors in the brainstorm tree and shows a
+// recover card instead of unmounting to a blank screen.
+class BrainstormErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  componentDidCatch(error: Error) {
+    console.error('[brainstorm] render crash', error)
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="life-card" style={{ margin: 24 }}>
+          <h3>Something went wrong rendering this brainstorm</h3>
+          <p className="life-empty-inline">{this.state.error.message}</p>
+          <button className="life-btn" onClick={() => this.setState({ error: null })}>
+            Retry
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 const BrainstormPage: React.FC = () => {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
@@ -104,7 +163,7 @@ const BrainstormPage: React.FC = () => {
       const plans = await listPlansForBrainstorm(lifeUser.id, id)
       const draft = plans.find((p) => p.status === 'draft') ?? null
       setPlanDraft(draft)
-      if (draft) setSnapshot(draft.snapshot)
+      if (draft) setSnapshot(normalizePlan(draft.snapshot))
     })().catch((e) => alert((e as Error).message))
   }, [id, lifeUser])
 
@@ -200,20 +259,23 @@ const BrainstormPage: React.FC = () => {
         }
       }
 
-      // Upsert plan draft if the agent produced one
+      // Upsert plan draft if the agent produced one. Normalize first so
+      // partial agent JSON (missing pre_mortem / tasks / etc.) can never
+      // land in state and crash the render.
       if (result.draft_plan) {
+        const safePlan = normalizePlan(result.draft_plan)
         if (planDraft) {
-          await updatePlanSnapshot(lifeUser.id, planDraft.id, result.draft_plan)
-          setPlanDraft({ ...planDraft, snapshot: result.draft_plan })
+          await updatePlanSnapshot(lifeUser.id, planDraft.id, safePlan)
+          setPlanDraft({ ...planDraft, snapshot: safePlan })
         } else {
           const created = await createPlanDraft({
             userId: lifeUser.id,
             brainstormId: bs.id,
-            snapshot: result.draft_plan,
+            snapshot: safePlan,
           })
           setPlanDraft(created)
         }
-        setSnapshot(result.draft_plan)
+        setSnapshot(safePlan)
       }
     } catch (err) {
       alert(`Brainstorm turn failed: ${(err as Error).message}`)
@@ -241,7 +303,7 @@ const BrainstormPage: React.FC = () => {
       exploration: Boolean(brainstorm.context.exploration),
     })
     setGateReport({ blockers: result.blockers, warnings: result.warnings })
-    setSnapshot(result.calibratedSnapshot)
+    setSnapshot(normalizePlan(result.calibratedSnapshot))
   }
 
   const commit = async () => {
@@ -281,6 +343,7 @@ const BrainstormPage: React.FC = () => {
 
   return (
     <LifeLayout title={brainstorm?.title ? `Brainstorm · ${brainstorm.title}` : 'New brainstorm'}>
+      <BrainstormErrorBoundary>
       <div className="life-brainstorm-grid">
         {/* LEFT: chat */}
         <section className="life-brainstorm-chat">
@@ -462,6 +525,7 @@ const BrainstormPage: React.FC = () => {
           )}
         </aside>
       </div>
+      </BrainstormErrorBoundary>
     </LifeLayout>
   )
 }
