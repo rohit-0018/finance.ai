@@ -62,6 +62,8 @@ import {
 } from '../lib/notifier'
 import TaskEditPanel from './todos/TaskEditPanel'
 import CalendarCreateModal from '../components/CalendarCreateModal'
+import { formatPreview } from '../lib/nlDate'
+import { quickParseTask } from '../lib/quickParse'
 
 // ──────────────────────────────────────────────────────────────────────
 // Constants
@@ -489,6 +491,48 @@ const TodosPage: React.FC = () => {
     }
   }
 
+  // Overdue bulk-move: any loaded row whose scheduled_for is strictly
+  // before today and isn't done/dropped. We compute against `rows` (what
+  // the user currently sees) rather than hitting the DB — the filter bar
+  // decides what's in scope.
+  const overdueTasks = useMemo(
+    () =>
+      rows.filter(
+        (t) =>
+          !!t.scheduled_for &&
+          t.scheduled_for < today &&
+          t.status !== 'done' &&
+          t.status !== 'dropped'
+      ),
+    [rows, today]
+  )
+
+  const [movingOverdue, setMovingOverdue] = useState(false)
+  const moveOverdueToToday = async () => {
+    if (!lifeUser || movingOverdue || overdueTasks.length === 0) return
+    setMovingOverdue(true)
+    const targets = overdueTasks
+    // Optimistic: patch every overdue row in place so the user sees them
+    // jump to "Today" instantly. Rollback on any per-row failure.
+    setRows((r) =>
+      r.map((t) => {
+        const ov = targets.find((x) => x.id === t.id)
+        return ov ? { ...t, ...buildReschedulePatch(t, today) } : t
+      })
+    )
+    try {
+      for (const t of targets) {
+        await updateTask(lifeUser.id, t.id, buildReschedulePatch(t, today))
+      }
+      setNotice(`Moved ${targets.length} overdue task${targets.length === 1 ? '' : 's'} to today.`)
+    } catch (err) {
+      setError(`Move-overdue failed: ${(err as Error).message}`)
+      load()
+    } finally {
+      setMovingOverdue(false)
+    }
+  }
+
   // Dismiss the hover popup after an action. Adds `.closed` (CSS forces
   // display:none even while :hover), and clears it on the next mouseleave
   // so the menu can reopen on the next hover.
@@ -596,17 +640,21 @@ const TodosPage: React.FC = () => {
 
   const addQuickTask = async () => {
     if (!lifeUser || !activeWorkspace || !quickTitle.trim()) return
-    const title = quickTitle.trim()
+    // Parse structured fields out of the typed input:
+    //   "Buy groceries #home #errands p2 tomorrow"
+    //   → title "Buy groceries", tags ["home","errands"], priority 2,
+    //     scheduled_for tomorrow
+    // Anything not matched stays on the title (legacy behaviour).
+    const parsed = quickParseTask(quickTitle, today)
     setError(null)
     try {
-      // Leave undated by default — the user can pick a date via the inline
-      // date pill on the new row. Forcing today here meant every quick-add
-      // silently landed on the Today dashboard and cluttered it.
       await createTask({
         userId: lifeUser.id,
         workspaceId: activeWorkspace.id,
-        title,
-        scheduled_for: null,
+        title: parsed.title,
+        scheduled_for: parsed.scheduled_for,
+        tags: parsed.tags.length > 0 ? parsed.tags : undefined,
+        priority: parsed.priority ?? undefined,
         source: 'manual',
       })
       // Only clear AFTER the write lands. Refresh list.
@@ -615,7 +663,7 @@ const TodosPage: React.FC = () => {
       load()
       // Confirmation notification (best-effort).
       ensureNotifPermission().then((ok) => {
-        if (ok) fireBrowserNotification('Todo added', title)
+        if (ok) fireBrowserNotification('Todo added', parsed.title)
       })
     } catch (err) {
       // Keep the input intact so the user doesn't lose their typing.
@@ -797,6 +845,28 @@ const TodosPage: React.FC = () => {
               Add
             </button>
           </div>
+          {(() => {
+            const preview = quickParseTask(quickTitle, today)
+            const hasAny =
+              preview.scheduled_for || preview.tags.length > 0 || preview.priority !== null
+            if (!hasAny) return null
+            return (
+              <div className="todos-quickadd-preview">
+                <span>→ </span>
+                {preview.scheduled_for && (
+                  <>
+                    <strong>{formatPreview(preview.scheduled_for, today)}</strong>
+                  </>
+                )}
+                {preview.tags.map((t) => (
+                  <span key={`t-${t}`} className="kbd">#{t}</span>
+                ))}
+                {preview.priority !== null && (
+                  <span className={`kbd prio prio-p${preview.priority}`}>P{preview.priority}</span>
+                )}
+              </div>
+            )
+          })()}
           {paragraphOpen && (
             <div className="todos-paragraph">
               <span className="label">Generate tasks from paragraph</span>
@@ -834,6 +904,23 @@ const TodosPage: React.FC = () => {
           <div className="todos-banner notice">
             <span>{notice}</span>
             <button onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
+          </div>
+        )}
+
+        {/* Overdue rollover — one-click bulk "move to today" */}
+        {overdueTasks.length > 0 && (
+          <div className="todos-banner overdue" role="status">
+            <span>
+              {overdueTasks.length} overdue task{overdueTasks.length === 1 ? '' : 's'} from earlier
+              days.
+            </span>
+            <button
+              className="overdue-move-btn"
+              onClick={moveOverdueToToday}
+              disabled={movingOverdue}
+            >
+              {movingOverdue ? 'Moving…' : 'Move all to today'}
+            </button>
           </div>
         )}
 
