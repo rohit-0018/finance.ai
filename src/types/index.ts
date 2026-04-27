@@ -238,7 +238,17 @@ export interface AppStats {
   streak: number
 }
 
-export type NavigationPage = 'feed' | 'reader' | 'saved' | 'notes' | 'feeds' | 'interests' | 'settings'
+export interface Thought {
+  id: string
+  user_id: string
+  content: string
+  description: string | null
+  tags: string[]
+  created_at: string
+  updated_at: string
+}
+
+export type NavigationPage = 'feed' | 'reader' | 'saved' | 'notes' | 'feeds' | 'interests' | 'settings' | 'thoughts'
 
 export interface RawRSSItem {
   title: string

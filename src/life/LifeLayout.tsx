@@ -74,6 +74,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Reflect',
     items: [
       { path: '/life/journal', label: 'Journal', icon: <Icon kind="edit" /> },
+      { path: '/thoughts', label: 'Thoughts', icon: <Icon kind="brain" /> },
       { path: '/life/review', label: 'Review', icon: <Icon kind="trend" /> },
     ],
   },
@@ -656,6 +657,7 @@ const MAIN_NAV_ITEMS: NavItem[] = [
   { path: '/', label: 'Feed', icon: null },
   { path: '/saved', label: 'Saved', icon: null },
   { path: '/notes', label: 'Notes', icon: null },
+  { path: '/thoughts', label: 'Thoughts', icon: null },
   { path: '/interests', label: 'Interests', icon: null },
   { path: '/feeds', label: 'Feeds', icon: null },
   { path: '/admin/articles', label: 'Approvals', icon: null },

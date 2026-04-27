@@ -16,6 +16,7 @@ const ArticlesPage = lazy(() => import('./pages/ArticlesPage'))
 const ArticleReaderPage = lazy(() => import('./pages/ArticleReaderPage'))
 const AdminArticlesPage = lazy(() => import('./pages/AdminArticlesPage'))
 const InterestsPage = lazy(() => import('./pages/InterestsPage'))
+const ThoughtsPage = lazy(() => import('./pages/ThoughtsPage'))
 const AdminPage = lazy(() => import('./pages/SettingsPage'))
 // Life app — admin-only, lazy-loaded internal module (separate Supabase DB)
 const LifeApp = lazy(() => import('./life/LifeApp'))
@@ -47,6 +48,7 @@ const PaperMindRoutes: React.FC = () => (
         <Route path="/article/:id" element={<ArticleReaderPage />} />
         <Route path="/admin/articles" element={<AdminArticlesPage />} />
         <Route path="/interests" element={<InterestsPage />} />
+        <Route path="/thoughts" element={<ThoughtsPage />} />
         <Route path="/admin" element={<AdminPage />} />
       </Routes>
     </Suspense>

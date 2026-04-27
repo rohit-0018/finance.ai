@@ -13,6 +13,7 @@ import type {
   UserTopic,
   DailyBrief,
   DeepAnalysis,
+  Thought,
 } from '../types'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -904,4 +905,65 @@ export async function dbToggleBriefRead(id: string, read: boolean): Promise<void
     .eq('id', id)
 
   if (error) throw new Error(`Failed to update brief: ${error.message}`)
+}
+
+// ---------- Thoughts (per-user brain dump) ----------
+
+export async function dbCreateThought(opts: {
+  userId: string
+  content: string
+  description?: string | null
+  tags?: string[]
+}): Promise<Thought> {
+  const { data, error } = await supabase
+    .from('thoughts')
+    .insert({
+      user_id: opts.userId,
+      content: opts.content,
+      description: opts.description ?? null,
+      tags: opts.tags ?? [],
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Failed to save thought: ${error.message}`)
+  return data as Thought
+}
+
+export async function dbGetThoughts(userId: string): Promise<Thought[]> {
+  const { data, error } = await supabase
+    .from('thoughts')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+
+  if (error) throw new Error(`Failed to fetch thoughts: ${error.message}`)
+  return (data ?? []) as Thought[]
+}
+
+export async function dbUpdateThought(
+  userId: string,
+  id: string,
+  patch: { content?: string; description?: string | null; tags?: string[] }
+): Promise<Thought> {
+  const { data, error } = await supabase
+    .from('thoughts')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Failed to update thought: ${error.message}`)
+  return data as Thought
+}
+
+export async function dbDeleteThought(userId: string, id: string): Promise<void> {
+  const { error } = await supabase
+    .from('thoughts')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId)
+
+  if (error) throw new Error(`Failed to delete thought: ${error.message}`)
 }

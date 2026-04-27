@@ -119,6 +119,21 @@ create table if not exists fetch_log (
 
 create index if not exists idx_fetch_log_created on fetch_log(created_at desc);
 
+-- Thoughts (per-user brain dump)
+create table if not exists thoughts (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references users(id) on delete cascade,
+  content text not null,
+  description text,
+  tags jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_thoughts_user on thoughts(user_id);
+create index if not exists idx_thoughts_created on thoughts(created_at desc);
+create index if not exists idx_thoughts_user_created on thoughts(user_id, created_at desc);
+
 -- Seed default arXiv RSS feeds (approved by default)
 insert into rss_feeds (name, url, topic, color, approved) values
   ('arXiv cs.AI', 'https://rss.arxiv.org/rss/cs.AI', 'AI', '#6366f1', true),
