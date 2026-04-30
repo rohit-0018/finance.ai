@@ -29,23 +29,34 @@ import {
   aggregateByCategory,
   aggregateDaily,
   aggregateMonthly,
+  listFinanceLoans,
+  createFinanceLoan,
+  deleteFinanceLoan,
+  addLoanPayment,
+  closeFinanceLoan,
+  reopenFinanceLoan,
+  loanOutstandingCents,
 } from '../lib/db'
 import type {
   LifeFinanceCategory,
   LifeFinanceTransaction,
   FinanceKind,
   PaymentMethod,
+  LifeFinanceLoan,
+  LoanDirection,
+  LoanStatus,
 } from '../types'
 
 // All amounts in the UI live as paise/cents to keep aggregations exact.
 const PAYMENT_METHODS: PaymentMethod[] = ['cash', 'upi', 'card', 'bank', 'other']
 
-type Tab = 'log' | 'overview' | 'transactions' | 'budgets' | 'categories' | 'insights'
+type Tab = 'log' | 'overview' | 'transactions' | 'budgets' | 'loans' | 'categories' | 'insights'
 const TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: 'log', label: 'Log', icon: '✏️' },
   { id: 'overview', label: 'Overview', icon: '📊' },
   { id: 'transactions', label: 'Transactions', icon: '📜' },
   { id: 'budgets', label: 'Budgets', icon: '🎯' },
+  { id: 'loans', label: 'Loans', icon: '🤝' },
   { id: 'categories', label: 'Categories', icon: '🏷️' },
   { id: 'insights', label: 'Insights', icon: '💡' },
 ]
@@ -208,6 +219,9 @@ const FinancePage: React.FC = () => {
               txnsThisMonth={txnsThisMonth}
               onChanged={reload}
             />
+          )}
+          {tab === 'loans' && (
+            <LoansTab workspaceId={activeWorkspace?.id ?? null} />
           )}
           {tab === 'categories' && (
             <CategoriesTab categories={categories} onChanged={reload} />
@@ -1058,6 +1072,573 @@ const InsightsTab: React.FC<{
           })
         )}
       </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// LOANS TAB — track money lent / borrowed, log partial repayments, close.
+// ──────────────────────────────────────────────────────────────────────
+
+function daysBetween(aIso: string, bIso: string): number {
+  const a = new Date(aIso).getTime()
+  const b = new Date(bIso).getTime()
+  return Math.round((b - a) / 86400000)
+}
+
+const LoansTab: React.FC<{ workspaceId: string | null }> = ({ workspaceId }) => {
+  const lifeUser = useLifeStore((s) => s.lifeUser)
+  const [loans, setLoans] = useState<LifeFinanceLoan[]>([])
+  const [loading, setLoading] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<LoanStatus | 'all'>('open')
+  const [directionFilter, setDirectionFilter] = useState<'all' | LoanDirection>('all')
+  const [search, setSearch] = useState('')
+  const [showForm, setShowForm] = useState(false)
+
+  const reload = useCallback(async () => {
+    if (!lifeUser) return
+    setLoading(true)
+    try {
+      const rows = await listFinanceLoans(lifeUser.id, {
+        status: statusFilter,
+        direction: directionFilter === 'all' ? undefined : directionFilter,
+        query: search.trim() || undefined,
+      })
+      setLoans(rows)
+    } finally {
+      setLoading(false)
+    }
+  }, [lifeUser, statusFilter, directionFilter, search])
+
+  useEffect(() => {
+    reload()
+  }, [reload])
+
+  const summary = useMemo(() => {
+    let lentOut = 0
+    let owed = 0
+    let openCount = 0
+    let overdueCount = 0
+    const nowIso = new Date().toISOString()
+    for (const l of loans) {
+      if (l.status !== 'open') continue
+      openCount++
+      const out = loanOutstandingCents(l)
+      if (l.direction === 'lent') lentOut += out
+      else owed += out
+      if (l.due_at && l.due_at < nowIso) overdueCount++
+    }
+    return { lentOut, owed, net: lentOut - owed, openCount, overdueCount }
+  }, [loans])
+
+  return (
+    <>
+      <div className="life-fin-header">
+        <KPICard label="Lent out (open)" value={fmt(summary.lentOut)} accent="#22c55e" />
+        <KPICard label="You owe (open)" value={fmt(summary.owed)} accent="#ef4444" />
+        <KPICard
+          label="Net position"
+          value={fmt(Math.abs(summary.net))}
+          accent={summary.net >= 0 ? '#22c55e' : '#ef4444'}
+        />
+        <KPICard
+          label="Open loans"
+          value={`${summary.openCount}${summary.overdueCount > 0 ? ` · ${summary.overdueCount} overdue` : ''}`}
+          accent={summary.overdueCount > 0 ? '#f59e0b' : '#6366f1'}
+        />
+      </div>
+
+      <div className="life-fin-filters" style={{ marginTop: 16 }}>
+        <input
+          className="life-search"
+          placeholder="Search by person…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as LoanStatus | 'all')}
+          className="life-fin-input"
+        >
+          <option value="open">Open</option>
+          <option value="closed">Closed</option>
+          <option value="written_off">Written off</option>
+          <option value="all">All</option>
+        </select>
+        <select
+          value={directionFilter}
+          onChange={(e) => setDirectionFilter(e.target.value as 'all' | LoanDirection)}
+          className="life-fin-input"
+        >
+          <option value="all">All directions</option>
+          <option value="lent">Lent (you → them)</option>
+          <option value="borrowed">Borrowed (them → you)</option>
+        </select>
+        <button
+          className="life-btn primary"
+          onClick={() => setShowForm((v) => !v)}
+          style={{ marginLeft: 'auto' }}
+        >
+          {showForm ? 'Cancel' : '+ Add loan'}
+        </button>
+      </div>
+
+      {showForm && (
+        <LoanForm
+          workspaceId={workspaceId}
+          onSaved={() => {
+            setShowForm(false)
+            reload()
+          }}
+        />
+      )}
+
+      {loading && loans.length === 0 ? (
+        <div className="life-empty">
+          <p>Loading…</p>
+        </div>
+      ) : loans.length === 0 ? (
+        <div className="life-empty">
+          <h3>No loans yet</h3>
+          <p>Track money you've lent to friends or borrowed. Close them out when settled.</p>
+        </div>
+      ) : (
+        <div className="life-fin-table" style={{ marginTop: 12 }}>
+          {loans.map((l) => (
+            <LoanRow key={l.id} loan={l} onChanged={reload} />
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+const LoanForm: React.FC<{
+  workspaceId: string | null
+  onSaved: () => void
+}> = ({ workspaceId, onSaved }) => {
+  const lifeUser = useLifeStore((s) => s.lifeUser)
+  const [direction, setDirection] = useState<LoanDirection>('lent')
+  const [counterparty, setCounterparty] = useState('')
+  const [amount, setAmount] = useState('')
+  const [interest, setInterest] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('upi')
+  const [startedDate, setStartedDate] = useState(todayLocalDateInputValue())
+  const [dueDate, setDueDate] = useState('')
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const submit = async () => {
+    if (!lifeUser) return
+    if (!counterparty.trim()) {
+      alert('Who is this loan with?')
+      return
+    }
+    const amt = parseFloat(amount)
+    if (!Number.isFinite(amt) || amt <= 0) {
+      alert('Enter a positive amount.')
+      return
+    }
+    setSaving(true)
+    try {
+      const now = new Date()
+      const startedIso = new Date(`${startedDate}T${now.toTimeString().slice(0, 8)}`).toISOString()
+      await createFinanceLoan({
+        userId: lifeUser.id,
+        workspaceId,
+        counterparty: counterparty.trim(),
+        direction,
+        principal_cents: Math.round(amt * 100),
+        interest_pct: interest ? Math.max(0, parseFloat(interest)) : 0,
+        payment_method: paymentMethod,
+        note: note.trim() || null,
+        started_at: startedIso,
+        due_at: dueDate ? new Date(`${dueDate}T23:59:59`).toISOString() : null,
+      })
+      onSaved()
+    } catch (e) {
+      alert(`Failed: ${(e as Error).message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="life-card" style={{ marginTop: 14, padding: 16 }}>
+      <div className="life-fin-log-row">
+        <div className="life-fin-kind-toggle">
+          <button
+            className={direction === 'lent' ? 'active income' : ''}
+            onClick={() => setDirection('lent')}
+            title="You gave money to someone"
+          >
+            → Lent out
+          </button>
+          <button
+            className={direction === 'borrowed' ? 'active expense' : ''}
+            onClick={() => setDirection('borrowed')}
+            title="Someone gave money to you"
+          >
+            ← Borrowed
+          </button>
+        </div>
+        <div className="life-fin-amount-wrap">
+          <span className="life-fin-currency">{RUPEE}</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0"
+            className="life-fin-amount-input"
+          />
+        </div>
+      </div>
+
+      <div className="life-fin-form-grid" style={{ marginTop: 12 }}>
+        <div style={{ gridColumn: 'span 2' }}>
+          <label className="life-fin-label">
+            {direction === 'lent' ? 'Lent to' : 'Borrowed from'}
+          </label>
+          <input
+            type="text"
+            value={counterparty}
+            onChange={(e) => setCounterparty(e.target.value)}
+            placeholder="Person or entity"
+            className="life-fin-input"
+          />
+        </div>
+        <div>
+          <label className="life-fin-label">Started</label>
+          <input
+            type="date"
+            value={startedDate}
+            onChange={(e) => setStartedDate(e.target.value)}
+            className="life-fin-input"
+          />
+        </div>
+        <div>
+          <label className="life-fin-label">Due (optional)</label>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            className="life-fin-input"
+          />
+        </div>
+        <div>
+          <label className="life-fin-label">Payment</label>
+          <select
+            value={paymentMethod}
+            onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+            className="life-fin-input"
+          >
+            {PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="life-fin-label">Interest % (annual, optional)</label>
+          <input
+            type="number"
+            value={interest}
+            onChange={(e) => setInterest(e.target.value)}
+            placeholder="0"
+            className="life-fin-input"
+          />
+        </div>
+        <div style={{ gridColumn: 'span 2' }}>
+          <label className="life-fin-label">Note (optional)</label>
+          <input
+            type="text"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="What's this for?"
+            className="life-fin-input"
+          />
+        </div>
+      </div>
+
+      <button
+        className="life-btn primary life-fin-save"
+        onClick={submit}
+        disabled={saving || !amount || !counterparty.trim()}
+      >
+        {saving ? 'Saving…' : `Save ${direction === 'lent' ? 'loan out' : 'debt'}`}
+      </button>
+    </div>
+  )
+}
+
+const LoanRow: React.FC<{ loan: LifeFinanceLoan; onChanged: () => void }> = ({
+  loan,
+  onChanged,
+}) => {
+  const lifeUser = useLifeStore((s) => s.lifeUser)
+  const [expanded, setExpanded] = useState(false)
+  const [paying, setPaying] = useState(false)
+  const [payAmount, setPayAmount] = useState('')
+  const [payDate, setPayDate] = useState(todayLocalDateInputValue())
+  const [payNote, setPayNote] = useState('')
+
+  const outstanding = loanOutstandingCents(loan)
+  const paid = loan.principal_cents - outstanding
+  const pct = loan.principal_cents > 0
+    ? Math.round((paid / loan.principal_cents) * 100)
+    : 0
+
+  const nowIso = new Date().toISOString()
+  const overdue = loan.status === 'open' && loan.due_at != null && loan.due_at < nowIso
+  const daysOverdue = overdue && loan.due_at ? daysBetween(loan.due_at, nowIso) : 0
+  const ageDays = daysBetween(loan.started_at, nowIso)
+
+  const isLent = loan.direction === 'lent'
+  const accent = loan.status !== 'open'
+    ? '#64748b'
+    : isLent
+      ? '#22c55e'
+      : '#ef4444'
+  const directionLabel = isLent ? 'Lent to' : 'Borrowed from'
+  const arrow = isLent ? '→' : '←'
+
+  const submitPayment = async () => {
+    if (!lifeUser) return
+    const num = parseFloat(payAmount)
+    if (!Number.isFinite(num) || num <= 0) return
+    const cents = Math.round(num * 100)
+    if (cents > outstanding) {
+      if (!confirm(`That's more than the ${fmtFull(outstanding)} outstanding. Log it anyway?`)) {
+        return
+      }
+    }
+    setPaying(true)
+    try {
+      const now = new Date()
+      const paidAt = new Date(`${payDate}T${now.toTimeString().slice(0, 8)}`).toISOString()
+      await addLoanPayment(lifeUser.id, loan, {
+        amount_cents: cents,
+        paid_at: paidAt,
+        note: payNote.trim() || null,
+      })
+      setPayAmount('')
+      setPayNote('')
+      onChanged()
+    } catch (e) {
+      alert(`Failed: ${(e as Error).message}`)
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  const close = async (status: 'closed' | 'written_off') => {
+    if (!lifeUser) return
+    const verb = status === 'closed' ? 'mark settled' : 'write off'
+    if (!confirm(`${verb.charAt(0).toUpperCase()}${verb.slice(1)} this loan with ${loan.counterparty}?`)) return
+    await closeFinanceLoan(lifeUser.id, loan.id, status)
+    onChanged()
+  }
+
+  const reopen = async () => {
+    if (!lifeUser) return
+    await reopenFinanceLoan(lifeUser.id, loan.id)
+    onChanged()
+  }
+
+  const remove = async () => {
+    if (!lifeUser) return
+    if (!confirm(`Delete this loan with ${loan.counterparty}? This can't be undone.`)) return
+    await deleteFinanceLoan(lifeUser.id, loan.id)
+    onChanged()
+  }
+
+  return (
+    <div className="life-fin-table-row" style={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      <span className="life-fin-recent-icon" style={{ background: accent }}>
+        {arrow}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="life-fin-recent-title">
+          {directionLabel} <strong>{loan.counterparty}</strong>
+          {loan.status === 'closed' && (
+            <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#22c55e' }}>· settled</span>
+          )}
+          {loan.status === 'written_off' && (
+            <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#64748b' }}>· written off</span>
+          )}
+          {overdue && (
+            <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#f59e0b' }}>
+              · overdue {daysOverdue}d
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+          {fmtFull(loan.principal_cents)} principal · started {new Date(loan.started_at).toLocaleDateString()} ({ageDays}d ago)
+          {loan.due_at && ` · due ${new Date(loan.due_at).toLocaleDateString()}`}
+          {loan.interest_pct > 0 && ` · ${loan.interest_pct}% p.a.`}
+          {loan.payment_method && ` · ${loan.payment_method}`}
+        </div>
+        {loan.note && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
+            {loan.note}
+          </div>
+        )}
+        {loan.principal_cents > 0 && (
+          <div className="life-fin-progress" style={{ marginTop: 6 }}>
+            <div
+              className="life-fin-progress-bar"
+              style={{
+                width: `${Math.min(100, pct)}%`,
+                background: loan.status === 'closed' ? '#22c55e' : accent,
+              }}
+            />
+          </div>
+        )}
+      </div>
+      <div style={{ minWidth: 110, textAlign: 'right' }}>
+        <div style={{ fontWeight: 600, color: accent }}>
+          {fmtFull(outstanding)}
+        </div>
+        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+          outstanding · {pct}% paid
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        {loan.status === 'open' && (
+          <>
+            <button
+              className="life-btn"
+              onClick={() => setExpanded((v) => !v)}
+              style={{ padding: '4px 10px' }}
+            >
+              {expanded ? 'Cancel' : '+ Payment'}
+            </button>
+            <button
+              className="life-btn primary"
+              onClick={() => close('closed')}
+              style={{ padding: '4px 10px' }}
+            >
+              Close
+            </button>
+            <button
+              className="life-btn"
+              onClick={() => close('written_off')}
+              style={{ padding: '4px 10px' }}
+              title="Mark as never coming back"
+            >
+              Write off
+            </button>
+          </>
+        )}
+        {loan.status !== 'open' && (
+          <button
+            className="life-btn"
+            onClick={reopen}
+            style={{ padding: '4px 10px' }}
+          >
+            Reopen
+          </button>
+        )}
+        <button
+          className="life-btn danger"
+          onClick={remove}
+          style={{ padding: '4px 10px' }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {expanded && loan.status === 'open' && (
+        <div
+          style={{
+            flexBasis: '100%',
+            marginTop: 10,
+            padding: 12,
+            background: 'var(--bg2, var(--hover))',
+            borderRadius: 8,
+          }}
+        >
+          <div className="life-fin-form-grid">
+            <div>
+              <label className="life-fin-label">Amount paid</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+                placeholder={`up to ${(outstanding / 100).toFixed(2)}`}
+                className="life-fin-input"
+              />
+            </div>
+            <div>
+              <label className="life-fin-label">Date</label>
+              <input
+                type="date"
+                value={payDate}
+                onChange={(e) => setPayDate(e.target.value)}
+                className="life-fin-input"
+              />
+            </div>
+            <div style={{ gridColumn: 'span 2' }}>
+              <label className="life-fin-label">Note (optional)</label>
+              <input
+                type="text"
+                value={payNote}
+                onChange={(e) => setPayNote(e.target.value)}
+                placeholder="e.g. partial repayment via UPI"
+                className="life-fin-input"
+              />
+            </div>
+          </div>
+          <button
+            className="life-btn primary"
+            onClick={submitPayment}
+            disabled={paying || !payAmount}
+            style={{ marginTop: 10 }}
+          >
+            {paying ? 'Saving…' : 'Log payment'}
+          </button>
+          {loan.payments.length > 0 && (
+            <>
+              <div
+                style={{
+                  marginTop: 14,
+                  fontSize: '0.74rem',
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.4,
+                }}
+              >
+                Payment history
+              </div>
+              <div style={{ marginTop: 6 }}>
+                {[...loan.payments]
+                  .sort((a, b) => (a.paid_at < b.paid_at ? 1 : -1))
+                  .map((p, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: '0.78rem',
+                        padding: '4px 0',
+                        borderBottom: '1px solid var(--border)',
+                      }}
+                    >
+                      <span>
+                        {new Date(p.paid_at).toLocaleDateString()}
+                        {p.note && ` · ${p.note}`}
+                      </span>
+                      <strong style={{ color: accent }}>{fmtFull(p.amount_cents)}</strong>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

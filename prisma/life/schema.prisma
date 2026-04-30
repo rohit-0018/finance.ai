@@ -64,6 +64,7 @@ model life_users {
   integrations        life_integrations[]
   finance_categories  life_finance_categories[]
   finance_transactions life_finance_transactions[]
+  finance_loans        life_finance_loans[]
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -661,4 +662,36 @@ model life_finance_transactions {
 
   @@index([user_id, occurred_at])
   @@index([user_id, category_id])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Loans — money you've lent out or borrowed. Partial repayments are stored
+// inline as a jsonb array so we don't need a join table; outstanding is
+// computed in app code as principal - sum(payments).
+// ──────────────────────────────────────────────────────────────────────────────
+model life_finance_loans {
+  id              String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id         String     @db.Uuid
+  workspace_id    String?    @db.Uuid
+  counterparty    String
+  direction       String     // "lent" | "borrowed"
+  principal_cents Int
+  currency        String     @default("INR")
+  interest_pct    Decimal    @default(0) @db.Decimal(6, 3)
+  payment_method  String?
+  note            String?
+  tags            Json       @default("[]")
+  payments        Json       @default("[]") // [{amount_cents, paid_at, note}]
+  started_at      DateTime   @db.Timestamptz()
+  due_at          DateTime?  @db.Timestamptz()
+  closed_at       DateTime?  @db.Timestamptz()
+  status          String     @default("open") // "open" | "closed" | "written_off"
+  created_at      DateTime   @default(now()) @db.Timestamptz()
+  updated_at      DateTime   @default(now()) @updatedAt @db.Timestamptz()
+
+  user            life_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, status])
+  @@index([user_id, started_at])
+  @@index([user_id, counterparty])
 }

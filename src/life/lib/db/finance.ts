@@ -4,6 +4,10 @@ import type {
   LifeFinanceTransaction,
   FinanceKind,
   PaymentMethod,
+  LifeFinanceLoan,
+  LoanDirection,
+  LoanStatus,
+  LoanPayment,
 } from '../../types'
 
 // ──────────────────────────────────────────────────────────────────────
@@ -273,6 +277,165 @@ export interface MonthSummary {
   month: string // YYYY-MM
   expense_cents: number
   income_cents: number
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Loans (lending / borrowing)
+// ──────────────────────────────────────────────────────────────────────
+
+function normalizeLoan(row: LifeFinanceLoan): LifeFinanceLoan {
+  return {
+    ...row,
+    interest_pct: Number(row.interest_pct ?? 0),
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    payments: Array.isArray(row.payments) ? row.payments : [],
+  }
+}
+
+/** Outstanding = principal − sum of payments. Never negative. */
+export function loanOutstandingCents(loan: LifeFinanceLoan): number {
+  const paid = loan.payments.reduce((a, p) => a + (p.amount_cents ?? 0), 0)
+  return Math.max(0, loan.principal_cents - paid)
+}
+
+export interface ListLoansFilter {
+  status?: LoanStatus | 'all'
+  direction?: LoanDirection
+  query?: string
+}
+
+export async function listFinanceLoans(
+  userId: string,
+  filter: ListLoansFilter = {}
+): Promise<LifeFinanceLoan[]> {
+  let q = lifeDb()
+    .from('life_finance_loans')
+    .select('*')
+    .eq('user_id', userId)
+    .order('started_at', { ascending: false })
+  if (filter.status && filter.status !== 'all') q = q.eq('status', filter.status)
+  if (filter.direction) q = q.eq('direction', filter.direction)
+  if (filter.query && filter.query.trim()) {
+    const safe = filter.query.trim().replace(/[%_\\]/g, (c) => `\\${c}`)
+    q = q.ilike('counterparty', `%${safe}%`)
+  }
+  const { data, error } = await q
+  if (error) throw new Error(`listFinanceLoans: ${error.message}`)
+  return ((data ?? []) as LifeFinanceLoan[]).map(normalizeLoan)
+}
+
+export async function createFinanceLoan(input: {
+  userId: string
+  workspaceId?: string | null
+  counterparty: string
+  direction: LoanDirection
+  principal_cents: number
+  currency?: string
+  interest_pct?: number
+  payment_method?: PaymentMethod | null
+  note?: string | null
+  tags?: string[]
+  started_at?: string
+  due_at?: string | null
+}): Promise<LifeFinanceLoan> {
+  const { data, error } = await lifeDb()
+    .from('life_finance_loans')
+    .insert({
+      user_id: input.userId,
+      workspace_id: input.workspaceId ?? null,
+      counterparty: input.counterparty.trim(),
+      direction: input.direction,
+      principal_cents: input.principal_cents,
+      currency: input.currency ?? 'INR',
+      interest_pct: input.interest_pct ?? 0,
+      payment_method: input.payment_method ?? null,
+      note: input.note ?? null,
+      tags: input.tags ?? [],
+      payments: [],
+      started_at: input.started_at ?? new Date().toISOString(),
+      due_at: input.due_at ?? null,
+      closed_at: null,
+      status: 'open',
+    })
+    .select()
+    .single()
+  if (error) throw new Error(`createFinanceLoan: ${error.message}`)
+  return normalizeLoan(data as LifeFinanceLoan)
+}
+
+export async function updateFinanceLoan(
+  userId: string,
+  id: string,
+  patch: Partial<Omit<LifeFinanceLoan, 'id' | 'user_id' | 'created_at'>>
+): Promise<void> {
+  const { error } = await lifeDb()
+    .from('life_finance_loans')
+    .update(patch)
+    .eq('id', id)
+    .eq('user_id', userId)
+  if (error) throw new Error(`updateFinanceLoan: ${error.message}`)
+}
+
+export async function deleteFinanceLoan(userId: string, id: string): Promise<void> {
+  const { error } = await lifeDb()
+    .from('life_finance_loans')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId)
+  if (error) throw new Error(`deleteFinanceLoan: ${error.message}`)
+}
+
+/** Append a partial repayment. If it brings outstanding to zero, auto-close. */
+export async function addLoanPayment(
+  userId: string,
+  loan: LifeFinanceLoan,
+  payment: LoanPayment
+): Promise<LifeFinanceLoan> {
+  const next = [...loan.payments, payment]
+  const totalPaid = next.reduce((a, p) => a + (p.amount_cents ?? 0), 0)
+  const fullyPaid = totalPaid >= loan.principal_cents
+  const patch: Record<string, unknown> = { payments: next }
+  if (fullyPaid && loan.status === 'open') {
+    patch.status = 'closed'
+    patch.closed_at = payment.paid_at
+  }
+  const { data, error } = await lifeDb()
+    .from('life_finance_loans')
+    .update(patch)
+    .eq('id', loan.id)
+    .eq('user_id', userId)
+    .select()
+    .single()
+  if (error) throw new Error(`addLoanPayment: ${error.message}`)
+  return normalizeLoan(data as LifeFinanceLoan)
+}
+
+/** Mark a loan closed (settled in full) or written off. */
+export async function closeFinanceLoan(
+  userId: string,
+  id: string,
+  status: 'closed' | 'written_off' = 'closed',
+  closedAtIso?: string
+): Promise<void> {
+  const { error } = await lifeDb()
+    .from('life_finance_loans')
+    .update({
+      status,
+      closed_at: closedAtIso ?? new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('user_id', userId)
+  if (error) throw new Error(`closeFinanceLoan: ${error.message}`)
+}
+
+/** Re-open a closed loan (e.g. mistakenly closed). */
+export async function reopenFinanceLoan(userId: string, id: string): Promise<void> {
+  const { error } = await lifeDb()
+    .from('life_finance_loans')
+    .update({ status: 'open', closed_at: null })
+    .eq('id', id)
+    .eq('user_id', userId)
+  if (error) throw new Error(`reopenFinanceLoan: ${error.message}`)
 }
 
 /** Last N month rollup for the trend chart. */

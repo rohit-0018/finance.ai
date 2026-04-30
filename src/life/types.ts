@@ -468,6 +468,36 @@ export interface LifeFinanceTransaction {
   updated_at: string
 }
 
+export type LoanDirection = 'lent' | 'borrowed'
+export type LoanStatus = 'open' | 'closed' | 'written_off'
+
+export interface LoanPayment {
+  amount_cents: number
+  paid_at: string // ISO timestamp
+  note?: string | null
+}
+
+export interface LifeFinanceLoan {
+  id: string
+  user_id: string
+  workspace_id: string | null
+  counterparty: string
+  direction: LoanDirection
+  principal_cents: number
+  currency: string
+  interest_pct: number
+  payment_method: PaymentMethod | null
+  note: string | null
+  tags: string[]
+  payments: LoanPayment[]
+  started_at: string
+  due_at: string | null
+  closed_at: string | null
+  status: LoanStatus
+  created_at: string
+  updated_at: string
+}
+
 export interface LifeIntegration {
   id: string
   user_id: string
